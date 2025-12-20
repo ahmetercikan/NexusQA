@@ -1,0 +1,46 @@
+<svg width="180" height="200" viewBox="10 0 180 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Logo Renk Geçişleri (Daha Koyu ve Belirgin) -->
+    <linearGradient id="paint0_linear" x1="100" y1="10" x2="100" y2="190" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1E40AF" /> <!-- Koyu Mavi -->
+      <stop offset="1" stop-color="#3730A3" stop-opacity="0.9" /> <!-- Koyu İndigo -->
+    </linearGradient>
+    
+    <radialGradient id="paint1_radial" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(100 120) rotate(90) scale(15)">
+      <stop stop-color="#1E40AF" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#172554" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Parlama Efekti (Favicon için azaltıldı, netlik artırıldı) -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Logo Grafiği -->
+  <g filter="url(#glow)">
+      <!-- Dış Kalkan (Çizgiler kalınlaştırıldı: 4 -> 8) -->
+      <path d="M100 10L180 55V145L100 190L20 145V55L100 10Z" stroke="url(#paint0_linear)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+      
+      <!-- İç Ağ Yapısı (Çizgiler kalınlaştırıldı: 3 -> 6 ve renkler koyulaştırıldı) -->
+      <path d="M100 40V80" stroke="#2563EB" stroke-width="6" stroke-linecap="round"/>
+      <path d="M100 80L135 100" stroke="#2563EB" stroke-width="6" stroke-linecap="round"/>
+      <path d="M100 80L65 100" stroke="#2563EB" stroke-width="6" stroke-linecap="round"/>
+      <path d="M65 100V140" stroke="#2563EB" stroke-width="6" stroke-opacity="0.9" stroke-linecap="round"/>
+      <path d="M135 100V140" stroke="#2563EB" stroke-width="6" stroke-opacity="0.9" stroke-linecap="round"/>
+      <path d="M65 140L100 160L135 140" stroke="#2563EB" stroke-width="6" stroke-opacity="0.9" stroke-linecap="round"/>
+
+      <!-- Bağlantı Noktaları (Biraz büyütüldü ve koyulaştırıldı) -->
+      <circle cx="100" cy="80" r="5" fill="white" />
+      <circle cx="65" cy="100" r="5" fill="#1D4ED8" />
+      <circle cx="135" cy="100" r="5" fill="#1D4ED8" />
+      <circle cx="100" cy="160" r="5" fill="#1D4ED8" />
+
+      <!-- Merkez Çekirdek -->
+      <circle cx="100" cy="120" r="15" stroke="#3730A3" stroke-width="4" fill="url(#paint1_radial)" />
+  </g>
+</svg>

@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexus-qa-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: nexus_qa
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Adminer - Database Management UI
+  adminer:
+    image: adminer:latest
+    container_name: nexus-qa-adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+  # Backend API (optional - for production)
+  # backend:
+  #   build:
+  #     context: ./backend
+  #     dockerfile: Dockerfile
+  #   container_name: nexus-qa-api
+  #   restart: unless-stopped
+  #   environment:
+  #     NODE_ENV: production
+  #     DATABASE_URL: postgresql://postgres:postgres@postgres:5432/nexus_qa?schema=public
+  #     CREWAI_API_URL: http://crewai:8000
+  #   ports:
+  #     - "3001:3001"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+
+  # CrewAI Python Service (optional - for production)
+  # crewai:
+  #   build:
+  #     context: ./agents
+  #     dockerfile: Dockerfile
+  #   container_name: nexus-qa-crewai
+  #   restart: unless-stopped
+  #   environment:
+  #     OPENAI_API_KEY: ${OPENAI_API_KEY}
+  #   ports:
+  #     - "8000:8000"
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  default:
+    name: nexus-qa-network
