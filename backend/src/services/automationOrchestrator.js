@@ -52,7 +52,9 @@ export async function startFullWorkflow(projectId, options = {}) {
     skipLogin = false,
     skipElementDiscovery = false,
     skipScriptGeneration = false,
-    headless = true
+    headless = true,
+    browser = 'chromium',
+    slowMo = 0
   } = options;
 
   const workflowId = `workflow-${Date.now()}`;
@@ -84,7 +86,9 @@ export async function startFullWorkflow(projectId, options = {}) {
     skipLogin,
     skipElementDiscovery,
     skipScriptGeneration,
-    headless
+    headless,
+    browser,
+    slowMo
   }).catch(error => {
     console.error(`[Orchestrator] Workflow ${workflowId} hatası:`, error);
   });
@@ -101,7 +105,9 @@ async function executeWorkflow(workflowId, projectId, scenarioIds, options = {})
     skipLogin = false,
     skipElementDiscovery = false,
     skipScriptGeneration = false,
-    headless = true
+    headless = true,
+    browser = 'chromium',
+    slowMo = 0
   } = options;
 
   const workflow = activeWorkflows.get(workflowId);
@@ -181,7 +187,7 @@ async function executeWorkflow(workflowId, projectId, scenarioIds, options = {})
           try {
             // Element discovery her zaman headless modda çalışsın
             // Test execution browser'ı kullanıcı görecek
-            await discoverElementsForScenario(currentScenario, project, { headless: true });
+            await discoverElementsForScenario(currentScenario, project, { headless: true, browser, slowMo });
             // Senaryo verisini yenile
             currentScenario = await prisma.scenario.findUnique({ where: { id: scenario.id } });
             console.log(`[Orchestrator] Element keşfi tamamlandı: ${scenario.title}`);
@@ -227,7 +233,41 @@ async function executeWorkflow(workflowId, projectId, scenarioIds, options = {})
         workflow.status = WORKFLOW_STATUS.RUNNING;
         await createLog('ORCHESTRATOR', 'INFO', `Test koşuluyor: ${scenario.title}`);
 
-        const testResult = await runTestForScenario(currentScenario, project, currentScenario.scriptPath);
+        // Orchestrator agent'ını bul
+        const orchestratorAgent = await prisma.agent.findFirst({
+          where: { type: 'ORCHESTRATOR' }
+        });
+
+        // Test Run kaydı oluştur
+        const testRun = await prisma.testRun.create({
+          data: {
+            suiteId: currentScenario.suiteId,
+            agentId: orchestratorAgent?.id,
+            status: 'RUNNING',
+            startedAt: new Date(),
+            metadata: {
+              scenarioId: currentScenario.id,
+              scenarioTitle: currentScenario.title,
+              browser: browser,
+              headless: headless,
+              slowMo: slowMo
+            }
+          }
+        });
+
+        const testResult = await runTestForScenario(currentScenario, project, currentScenario.scriptPath, { headless, browser, slowMo });
+
+        // Test Run kaydını güncelle (screenshot path dahil)
+        await prisma.testRun.update({
+          where: { id: testRun.id },
+          data: {
+            status: testResult.success ? 'PASSED' : 'FAILED',
+            finishedAt: new Date(),
+            durationMs: testResult.duration,
+            errorMessage: testResult.error || null,
+            screenshotPath: testResult.screenshotPath || null
+          }
+        });
 
         const updatedScenario = await prisma.scenario.update({
           where: { id: scenario.id },
@@ -337,7 +377,7 @@ async function executeWorkflow(workflowId, projectId, scenarioIds, options = {})
  * Tek senaryo için element keşfi
  */
 export async function discoverElementsForScenario(scenario, project, options = {}) {
-  const { headless = true } = options;
+  const { headless = true, browser = 'chromium', slowMo = 0 } = options;
 
   // Analist Agent'ı aktifleştir
   await updateAgentStatus('ANALYST', 'WORKING', 'Element keşfi yapılıyor...');
@@ -347,7 +387,7 @@ export async function discoverElementsForScenario(scenario, project, options = {
 
   try {
     // Tarayıcı başlat
-    await playwrightService.launchBrowser({ headless });
+    await playwrightService.launchBrowser({ headless, browser, slowMo });
     page = await playwrightService.createPage();
 
     // Sayfaya git
@@ -530,7 +570,9 @@ export async function generateScriptForScenario(scenario, project, elementMappin
 /**
  * Tek senaryo için test koş
  */
-export async function runTestForScenario(scenario, project, scriptPath) {
+export async function runTestForScenario(scenario, project, scriptPath, options = {}) {
+  const { headless = false, browser = 'chromium' } = options;
+
   // Orkestra Şefi Agent'ı aktifleştir
   await updateAgentStatus('ORCHESTRATOR', 'WORKING', 'Test koşuluyor...');
   await createLog('ORCHESTRATOR', 'INFO', `Test başladı: ${scenario.title}`);
@@ -565,11 +607,12 @@ export async function runTestForScenario(scenario, project, scriptPath) {
       await createLog('TEST_ARCHITECT', 'WARNING', `Agent hatası, orijinal script kullanılıyor: ${agentError.message}`);
     }
 
-    // Playwright'ı debug modda başlat - headed ve dengan screenshot capture
-    // testDir = tests/generated, scriptPath'in bu dizine göre relative path'ini bul
-    const testsGenDir = path.join(BACKEND_ROOT, 'tests', 'generated');
-    const relativeTestPath = path.relative(testsGenDir, scriptPath).replace(/\\/g, '/');
-    const testCommand = `npx playwright test "${relativeTestPath}" --reporter=json --headed --workers=1`;
+    // Playwright'ı başlat - headless veya headed modda
+    // Backend root'tan relative path bul (config dosyası backend/'da)
+    const relativeTestPath = path.relative(BACKEND_ROOT, scriptPath).replace(/\\/g, '/');
+    const headedFlag = headless ? '' : '--headed';
+    const projectFlag = `--project=${browser}`;
+    const testCommand = `npx playwright test "${relativeTestPath}" --reporter=json ${headedFlag} ${projectFlag} --workers=1`.trim();
 
     await createLog('ORCHESTRATOR', 'INFO', `Test başlıyor: ${scriptPath}`);
     await createLog('ORCHESTRATOR', 'INFO', `Komut: ${testCommand}`);
@@ -584,9 +627,9 @@ export async function runTestForScenario(scenario, project, scriptPath) {
 
     console.log('[Orchestrator] Screenshot monitoring devre dışı - headed browser kullanılıyor');
 
-    // CWD'yi tests/generated yap ki relative path doğru çalışsın
+    // CWD'yi backend root yap ki playwright.config.js bulunabilsin
     const { stdout, stderr } = await execAsync(testCommand, {
-      cwd: testsGenDir, // tests/generated dizini
+      cwd: BACKEND_ROOT, // backend dizini (config dosyası burada)
       timeout: 120000,
       shell: process.platform === 'win32' ? true : '/bin/bash'
     });
@@ -596,14 +639,40 @@ export async function runTestForScenario(scenario, project, scriptPath) {
     const duration = Date.now() - startTime;
 
     await updateAgentStatus('ORCHESTRATOR', 'COMPLETED', 'Test tamamlandı');
-    
+
     // Sonuç analiz et
     let passed = 1, failed = 0;
+    let screenshotPath = null;
     try {
       const report = JSON.parse(stdout);
       if (report.stats) {
         passed = report.stats.expected || 0;
         failed = report.stats.unexpected || 0;
+      }
+
+      // Screenshot path'ini bul (test fail olduğunda veya on-failure mode'da)
+      if (report.suites && report.suites.length > 0) {
+        for (const suite of report.suites) {
+          if (suite.specs && suite.specs.length > 0) {
+            for (const spec of suite.specs) {
+              if (spec.tests && spec.tests.length > 0) {
+                for (const test of spec.tests) {
+                  if (test.results && test.results.length > 0) {
+                    for (const result of test.results) {
+                      if (result.attachments && result.attachments.length > 0) {
+                        const screenshot = result.attachments.find(a => a.name === 'screenshot' || a.contentType?.includes('image'));
+                        if (screenshot && screenshot.path) {
+                          screenshotPath = screenshot.path;
+                          break;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     } catch (e) {
       // JSON parse başarısız, varsayılan değerleri kullan
@@ -620,7 +689,8 @@ export async function runTestForScenario(scenario, project, scriptPath) {
       duration,
       passed,
       failed,
-      output: stdout
+      output: stdout,
+      screenshotPath
     };
 
   } catch (error) {

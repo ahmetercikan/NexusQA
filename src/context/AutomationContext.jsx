@@ -31,6 +31,14 @@ export function AutomationProvider({ children }) {
   const [showCodePopup, setShowCodePopup] = useState(false);
   const [selectedScript, setSelectedScript] = useState(null);
 
+  // Test Settings
+  const [testSettings, setTestSettings] = useState({
+    browser: 'chromium', // chromium, firefox, webkit
+    headless: false,
+    slowMo: 0, // milliseconds
+    maxConcurrent: 1, // max parallel test runs
+  });
+
   // İlk yükleme yapıldı mı?
   const [initialized, setInitialized] = useState(false);
 
@@ -317,7 +325,9 @@ export function AutomationProvider({ children }) {
         runTests: true,
         skipElementDiscovery: false,
         skipScriptGeneration: false,
-        headless: false,
+        headless: testSettings.headless,
+        browser: testSettings.browser,
+        slowMo: testSettings.slowMo,
       });
 
       const data = response.data || response;
@@ -330,7 +340,7 @@ export function AutomationProvider({ children }) {
       addLog('error', `Başlatma hatası: ${error.response?.data?.error || error.message}`);
       setIsRunning(false);
     }
-  }, [selectedProject, selectedScenarios, addLog, pollWorkflowStatus]);
+  }, [selectedProject, selectedScenarios, testSettings, addLog, pollWorkflowStatus]);
 
   // Otomasyonu iptal et
   const cancelAutomation = useCallback(async () => {
@@ -412,6 +422,7 @@ export function AutomationProvider({ children }) {
     showCodePopup,
     selectedScript,
     initialized,
+    testSettings,
 
     // Actions
     selectProject,
@@ -425,6 +436,7 @@ export function AutomationProvider({ children }) {
     setShowCodePopup,
     setSelectedScript,
     setLiveScreenshot,
+    setTestSettings,
   };
 
   return (

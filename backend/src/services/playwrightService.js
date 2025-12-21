@@ -3,7 +3,7 @@
  * Tarayıcı otomasyonu için Playwright servis katmanı
  */
 
-import { chromium } from 'playwright';
+import { chromium, firefox, webkit } from 'playwright';
 import path from 'path';
 import fs from 'fs';
 
@@ -18,7 +18,8 @@ export async function launchBrowser(options = {}) {
   const {
     headless = true,
     viewport = { width: 1920, height: 1080 },
-    slowMo = 0
+    slowMo = 0,
+    browser = 'chromium'
   } = options;
 
   // Varsa önceki tarayıcıyı kapat
@@ -26,7 +27,11 @@ export async function launchBrowser(options = {}) {
     await closeBrowser();
   }
 
-  activeBrowser = await chromium.launch({
+  // Tarayıcı tipini seç
+  const browserTypes = { chromium, firefox, webkit };
+  const selectedBrowser = browserTypes[browser] || chromium;
+
+  activeBrowser = await selectedBrowser.launch({
     headless,
     slowMo,
     args: ['--no-sandbox', '--disable-setuid-sandbox']

@@ -60,6 +60,7 @@ export const agentsAPI = {
   stop: (id) => api.post(`/agents/${id}/stop`),
   reset: () => api.post('/agents/reset'),
   getLogs: (id, params) => api.get(`/agents/${id}/logs`, { params }),
+  query: (agentType, data) => api.post(`/agents/${agentType}/query`, data),
 };
 
 // ==================== TEST SUITES ====================

@@ -238,6 +238,119 @@ export const getAgentLogs = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Query an agent with a question
+ * POST /api/agents/:agentType/query
+ */
+export const queryAgent = asyncHandler(async (req, res) => {
+  const { agentType } = req.params;
+  const { question, context } = req.body;
+
+  if (!question) {
+    return res.status(400).json({ error: 'Question is required' });
+  }
+
+  // Find agent by type
+  const agent = await prisma.agent.findFirst({
+    where: { type: agentType }
+  });
+
+  if (!agent) {
+    return res.status(404).json({ error: `Agent with type ${agentType} not found` });
+  }
+
+  // Update agent status
+  await prisma.agent.update({
+    where: { id: agent.id },
+    data: {
+      status: 'WORKING',
+      currentTask: question.substring(0, 100)
+    }
+  });
+
+  try {
+    // For now, return a mock response
+    // TODO: Integrate with CrewAI when ready
+    const response = generateMockAgentResponse(agentType, question, context);
+
+    // Log the interaction
+    await prisma.log.create({
+      data: {
+        agentId: agent.id,
+        level: 'INFO',
+        message: `Query: ${question}`,
+        metadata: { question, context, response }
+      }
+    });
+
+    // Update agent back to IDLE
+    await prisma.agent.update({
+      where: { id: agent.id },
+      data: {
+        status: 'IDLE',
+        currentTask: null
+      }
+    });
+
+    res.json({
+      success: true,
+      response,
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        role: agent.role
+      }
+    });
+  } catch (error) {
+    // Update agent back to IDLE on error
+    await prisma.agent.update({
+      where: { id: agent.id },
+      data: {
+        status: 'IDLE',
+        currentTask: null
+      }
+    });
+    throw error;
+  }
+});
+
+// Mock response generator (temporary until CrewAI integration)
+function generateMockAgentResponse(agentType, question, context) {
+  if (agentType === 'REPORT_ANALYST') {
+    const { totalRuns, passedTests, failedTests, averageDuration } = context || {};
+
+    if (question.toLowerCase().includes('analiz')) {
+      return `Rapor analizi:\n\n` +
+        `📊 Toplam ${totalRuns || 0} test koşumu gerçekleştirilmiş.\n` +
+        `✅ Başarılı: ${passedTests || 0} test\n` +
+        `❌ Başarısız: ${failedTests || 0} test\n` +
+        `⏱️ Ortalama süre: ${averageDuration || 0}ms\n\n` +
+        `${failedTests > 0
+          ? `⚠️ Başarısız testler üzerinde çalışmanız gerekiyor. Element selector'larını ve test adımlarını gözden geçirin.`
+          : `🎉 Tüm testler başarılı! Harika bir test coverage'ınız var.`}`;
+    }
+
+    if (question.toLowerCase().includes('sorun') || question.toLowerCase().includes('hata')) {
+      return `Ortak sorunlar analizi:\n\n` +
+        `1. Element selector hatalar (%${failedTests ? Math.floor((failedTests / totalRuns) * 100) : 0})\n` +
+        `2. Timeout sorunları\n` +
+        `3. Dinamik içerik yükleme problemleri\n\n` +
+        `💡 Öneri: Daha güvenilir selector'lar kullanın ve wait stratejilerinizi iyileştirin.`;
+    }
+
+    if (question.toLowerCase().includes('iyileştir') || question.toLowerCase().includes('performans')) {
+      return `Test performansı iyileştirme önerileri:\n\n` +
+        `1. ⚡ Paralel test koşumu kullanın\n` +
+        `2. 🎯 Headless mode'da çalıştırın\n` +
+        `3. 📦 Test verilerini önceden hazırlayın\n` +
+        `4. 🔍 Gereksiz wait'leri kaldırın\n\n` +
+        `Ortalama test süresi ${averageDuration}ms. Hedef <5000ms olmalı.`;
+    }
+  }
+
+  return `Merhaba! Ben ${agentType} agent'ıyım. Sorunuza özel bir yanıt hazırlamak için CrewAI entegrasyonu tamamlanmalı.`;
+}
+
 export default {
   getAllAgents,
   getAgent,
@@ -246,5 +359,6 @@ export default {
   startAgent,
   stopAgent,
   resetAllAgents,
-  getAgentLogs
+  getAgentLogs,
+  queryAgent
 };
