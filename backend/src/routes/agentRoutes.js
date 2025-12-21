@@ -7,7 +7,8 @@ import {
   startAgent,
   stopAgent,
   resetAllAgents,
-  getAgentLogs
+  getAgentLogs,
+  queryAgent
 } from '../controllers/agentController.js';
 
 const router = Router();
@@ -35,5 +36,8 @@ router.post('/:id/stop', stopAgent);
 
 // GET /api/agents/:id/logs - Get agent logs
 router.get('/:id/logs', getAgentLogs);
+
+// POST /api/agents/:agentType/query - Query an agent (by type)
+router.post('/:agentType/query', queryAgent);
 
 export default router;

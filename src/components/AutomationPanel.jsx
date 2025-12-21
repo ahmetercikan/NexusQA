@@ -15,6 +15,7 @@ import {
   Copy,
   Download,
   Sparkles,
+  Settings,
 } from 'lucide-react';
 import { useAutomation } from '../context/AutomationContext';
 
@@ -38,12 +39,14 @@ export default function AutomationPanel() {
     liveScreenshot,
     showCodePopup,
     selectedScript,
+    testSettings,
     selectProject,
     toggleScenarioSelection,
     toggleAllScenarios,
     startAutomation,
     cancelAutomation,
     setShowCodePopup,
+    setTestSettings,
   } = useAutomation();
 
   const [copySuccess, setCopySuccess] = useState(false);
@@ -170,6 +173,93 @@ export default function AutomationPanel() {
                     </label>
                   ))
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Test Settings */}
+          {selectedProject && (
+            <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6">
+              <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                <Settings size={18} className="text-purple-400" />
+                Test Ayarları
+              </h2>
+
+              <div className="space-y-4">
+                {/* Browser Selection */}
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">Tarayıcı</label>
+                  <select
+                    value={testSettings.browser}
+                    onChange={(e) => setTestSettings({ ...testSettings, browser: e.target.value })}
+                    disabled={isRunning}
+                    className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50"
+                  >
+                    <option value="chromium">Chrome/Chromium</option>
+                    <option value="firefox">Firefox</option>
+                    <option value="webkit">Safari/WebKit</option>
+                  </select>
+                </div>
+
+                {/* Headless Mode */}
+                <div className="flex items-center justify-between">
+                  <label className="text-sm text-slate-400">Headless Mod</label>
+                  <button
+                    onClick={() => setTestSettings({ ...testSettings, headless: !testSettings.headless })}
+                    disabled={isRunning}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
+                      testSettings.headless ? 'bg-purple-600' : 'bg-slate-700'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        testSettings.headless ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* Slow Motion */}
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">
+                    Yavaş Hareket (ms): {testSettings.slowMo}
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1000"
+                    step="50"
+                    value={testSettings.slowMo}
+                    onChange={(e) => setTestSettings({ ...testSettings, slowMo: parseInt(e.target.value) })}
+                    disabled={isRunning}
+                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50 accent-purple-600"
+                  />
+                  <div className="flex justify-between text-xs text-slate-500 mt-1">
+                    <span>Hızlı</span>
+                    <span>Yavaş</span>
+                  </div>
+                </div>
+
+                {/* Max Concurrent Tests */}
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">
+                    Eş Zamanlı Test Limiti: {testSettings.maxConcurrent}
+                  </label>
+                  <input
+                    type="range"
+                    min="1"
+                    max="5"
+                    step="1"
+                    value={testSettings.maxConcurrent}
+                    onChange={(e) => setTestSettings({ ...testSettings, maxConcurrent: parseInt(e.target.value) })}
+                    disabled={isRunning}
+                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50 accent-purple-600"
+                  />
+                  <div className="flex justify-between text-xs text-slate-500 mt-1">
+                    <span>1</span>
+                    <span>5</span>
+                  </div>
+                </div>
               </div>
             </div>
           )}

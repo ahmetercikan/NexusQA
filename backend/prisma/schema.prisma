@@ -201,6 +201,7 @@ enum AgentType {
   TEST_ARCHITECT
   ORCHESTRATOR
   SECURITY_ANALYST
+  REPORT_ANALYST
 }
 
 enum AgentStatus {

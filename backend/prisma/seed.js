@@ -53,6 +53,17 @@ async function main() {
         totalCost: 0,
         icon: 'ShieldAlert'
       }
+    }),
+    prisma.agent.create({
+      data: {
+        name: 'Rapor Analisti',
+        role: 'Test Raporlama Uzmanı',
+        type: 'REPORT_ANALYST',
+        status: 'IDLE',
+        efficiency: 97.5,
+        totalCost: 0,
+        icon: 'BarChart3'
+      }
     })
   ]);
 
@@ -63,9 +74,9 @@ async function main() {
     where: { id: 1 },
     update: {},
     create: {
-      name: 'E-Ticaret V2.0',
-      description: 'E-commerce platform test projesi',
-      baseUrl: 'https://demo.ecommerce.com',
+      name: 'Nexus QA Projesi',
+      description: 'AI Powered Automation',
+      baseUrl: 'https://ahmetmesutercikan.com',
       isActive: true
     }
   });
