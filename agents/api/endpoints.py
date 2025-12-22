@@ -36,7 +36,7 @@ app.add_middleware(
 
 # Router
 from fastapi import APIRouter
-router = APIRouter(prefix="")
+router = APIRouter(prefix="/api")
 
 # ============================================================
 # PYDANTIC MODELS
