@@ -566,7 +566,10 @@ async def execute_document_analysis(task_id: str, document_content: str, documen
 
     try:
         import json
-        from config import llm
+        from openai import OpenAI
+
+        # Initialize OpenAI client
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
         # AI prompt - doküman analizi ve test senaryoları üretimi
         # Calculate document size for guidance
@@ -574,11 +577,10 @@ async def execute_document_analysis(task_id: str, document_content: str, documen
         doc_words = len(document_content.split())
 
         # For very long documents, use a more powerful model
-        current_llm = llm
+        model_name = "gpt-4o-mini"
         if doc_length > 50000:
             print(f"[DocumentAnalysis] Large document detected ({doc_length} chars), using gpt-4o for better analysis")
-            from crewai import LLM
-            current_llm = LLM(model="gpt-4o", api_key=os.getenv("OPENAI_API_KEY"))
+            model_name = "gpt-4o"
 
         prompt = f"""Analyze the following document and generate test scenarios.
 
@@ -634,10 +636,18 @@ Example (Turkish):
 Return ONLY a valid JSON object with a "scenarios" array. No markdown, no code blocks."""
 
         # AI'dan cevap al (use upgraded model for large documents)
-        response = current_llm.invoke(prompt)
+        completion = openai_client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "You are a test automation expert who generates test scenarios from documents."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=4000
+        )
 
         # Parse response
-        response_text = response.content.strip()
+        response_text = completion.choices[0].message.content.strip()
 
         # Remove markdown code blocks if present
         if response_text.startswith('```'):
@@ -712,7 +722,10 @@ async def execute_text_analysis(task_id: str, requirement_text: str, template: s
 
     try:
         import json
-        from config import llm
+        from openai import OpenAI
+
+        # Initialize OpenAI client
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
         # AI prompt - text'ten test senaryoları üret
         text_length = len(requirement_text)
@@ -795,10 +808,18 @@ CRITICAL RULES:
 - Return ONLY the JSON array, no markdown, no additional text"""
 
         # LLM'den yanıt al
-        response = llm.call(prompt)
+        completion = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a test automation expert who generates test scenarios from requirements."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=4000
+        )
 
         # Response'u parse et
-        response_text = response if isinstance(response, str) else str(response)
+        response_text = completion.choices[0].message.content.strip()
 
         # JSON'u çıkar (markdown code block içinde olabilir)
         if '```json' in response_text:
