@@ -576,7 +576,11 @@ Document content:
 
 Instructions:
 - The document may be in Turkish or English
-- Generate test scenarios based on the requirements in the document
+- Generate scenarios based on document complexity and content
+  * Simple single-sentence requirements → 1-2 scenarios
+  * Medium documents with multiple features → 3-7 scenarios
+  * Complex PRD documents → 8-15 scenarios
+- IMPORTANT: Adjust scenario count based on actual requirements in the document
 - Each scenario should have:
   * title: Brief descriptive title (in Turkish if document is Turkish)
   * description: What the test does (in Turkish if document is Turkish)
@@ -700,14 +704,17 @@ Requirement text:
 {requirement_text}
 
 Instructions:
-- If the text is a single simple sentence, create ONLY ONE scenario
-- If the text describes multiple features or complex requirements, create multiple scenarios
+- Adjust scenario count based on requirement complexity:
+  * Single simple action → 1 scenario
+  * Multiple related actions → 2-4 scenarios
+  * Complex multi-feature requirements → 5-10 scenarios
+- IMPORTANT: Don't create unnecessary scenarios - match the actual requirements
 - The text may be in Turkish or English
 - Each scenario should have:
-  * title: Brief descriptive title
-  * description: What the test does
+  * title: Brief descriptive title (in Turkish if text is Turkish)
+  * description: What the test does (in Turkish if text is Turkish)
   * steps: Array of steps with number and action (use clear, specific action verbs)
-  * expectedResult: What should happen
+  * expectedResult: What should happen (in Turkish if text is Turkish)
   * priority: HIGH, MEDIUM, or LOW
   * automationType: UI, API, or INTEGRATION
 
