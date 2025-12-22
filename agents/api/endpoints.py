@@ -36,7 +36,7 @@ app.add_middleware(
 
 # Router
 from fastapi import APIRouter
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="")  # No prefix - endpoints are directly at /crew/*, /tasks/*
 
 # ============================================================
 # PYDANTIC MODELS
