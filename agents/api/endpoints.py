@@ -569,18 +569,35 @@ async def execute_document_analysis(task_id: str, document_content: str, documen
         from config import llm
 
         # AI prompt - doküman analizi ve test senaryoları üretimi
+        # Calculate document size for guidance
+        doc_length = len(document_content)
+        doc_words = len(document_content.split())
+
+        # For very long documents, use a more powerful model
+        current_llm = llm
+        if doc_length > 50000:
+            print(f"[DocumentAnalysis] Large document detected ({doc_length} chars), using gpt-4o for better analysis")
+            from crewai import LLM
+            current_llm = LLM(model="gpt-4o", api_key=os.getenv("OPENAI_API_KEY"))
+
         prompt = f"""Analyze the following document and generate test scenarios.
+
+Document Statistics:
+- Length: {doc_length} characters
+- Words: ~{doc_words} words
 
 Document content:
 {document_content}
 
 Instructions:
+- CRITICAL: Read the ENTIRE document from beginning to end before generating scenarios
+- Do NOT skip any sections, chapters, or requirements
 - The document may be in Turkish or English
-- Generate scenarios based on document complexity and content
+- Generate scenarios based on document complexity and ALL requirements found:
   * Simple single-sentence requirements → 1-2 scenarios
   * Medium documents with multiple features → 3-7 scenarios
-  * Complex PRD documents → 8-15 scenarios
-- IMPORTANT: Adjust scenario count based on actual requirements in the document
+  * Complex PRD documents → 8-15+ scenarios
+- IMPORTANT: Extract scenarios from ALL sections of the document, not just the beginning
 - Each scenario should have:
   * title: Brief descriptive title (in Turkish if document is Turkish)
   * description: What the test does (in Turkish if document is Turkish)
@@ -616,8 +633,8 @@ Example (Turkish):
 
 Return ONLY a valid JSON object with a "scenarios" array. No markdown, no code blocks."""
 
-        # AI'dan cevap al
-        response = llm.invoke(prompt)
+        # AI'dan cevap al (use upgraded model for large documents)
+        response = current_llm.invoke(prompt)
 
         # Parse response
         response_text = response.content.strip()
@@ -698,16 +715,24 @@ async def execute_text_analysis(task_id: str, requirement_text: str, template: s
         from config import llm
 
         # AI prompt - text'ten test senaryoları üret
+        text_length = len(requirement_text)
+        text_words = len(requirement_text.split())
+
         prompt = f"""Analyze the following test requirement and generate test scenarios.
+
+Text Statistics:
+- Length: {text_length} characters
+- Words: ~{text_words} words
 
 Requirement text:
 {requirement_text}
 
 Instructions:
+- CRITICAL: Read the ENTIRE text carefully before generating scenarios
 - Adjust scenario count based on requirement complexity:
   * Single simple action → 1 scenario
   * Multiple related actions → 2-4 scenarios
-  * Complex multi-feature requirements → 5-10 scenarios
+  * Complex multi-feature requirements → 5-10+ scenarios
 - IMPORTANT: Don't create unnecessary scenarios - match the actual requirements
 - The text may be in Turkish or English
 - Each scenario should have:
