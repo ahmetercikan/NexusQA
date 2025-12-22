@@ -75,6 +75,8 @@ class DocumentAnalysisRequest(BaseModel):
     document_content: str
     document_info: Dict[str, Any]
     suite_id: Optional[int] = None
+    template: str = "text"  # 'text' or 'bdd'
+    options: Optional[Dict[str, Any]] = {}
 
 
 class TextAnalysisRequest(BaseModel):
@@ -545,7 +547,9 @@ async def analyze_document(request: DocumentAnalysisRequest, background_tasks: B
         task_id,
         request.document_content,
         request.document_info,
-        request.suite_id
+        request.suite_id,
+        request.template,
+        request.options
     )
 
     return {
@@ -556,14 +560,77 @@ async def analyze_document(request: DocumentAnalysisRequest, background_tasks: B
     }
 
 
-async def execute_document_analysis(task_id: str, document_content: str, document_info: dict, suite_id: int):
-    """Belge analizi çalıştırma"""
+async def execute_document_analysis(task_id: str, document_content: str, document_info: dict, suite_id: int, template: str = "text", options: dict = {}):
+    """Belge analizi çalıştırma - AI kullanarak"""
     tasks_storage[task_id]["status"] = "running"
 
     try:
-        from crews.document_crew import document_crew
+        import json
+        from config import llm
 
-        result = document_crew.analyze_document(document_content, document_info)
+        # AI prompt - doküman analizi ve test senaryoları üretimi
+        prompt = f"""Analyze the following document and generate test scenarios.
+
+Document content:
+{document_content}
+
+Instructions:
+- The document may be in Turkish or English
+- Generate test scenarios based on the requirements in the document
+- Each scenario should have:
+  * title: Brief descriptive title (in Turkish if document is Turkish)
+  * description: What the test does (in Turkish if document is Turkish)
+  * steps: Array of steps with number and action (use clear, specific action verbs)
+  * expectedResult: What should happen (in Turkish if document is Turkish)
+  * priority: HIGH, MEDIUM, or LOW
+  * automationType: UI, API, or INTEGRATION
+
+IMPORTANT ACTION KEYWORDS:
+- Turkish "ara" / "arama" = English "search" → Use "Search for [term]" or "Type '[term]' into search box"
+- Turkish "tıkla" = English "click" → Use "Click [element]"
+- Turkish "yaz" / "gir" = English "type/fill" → Use "Type '[text]' into [field]"
+- Turkish "aç" / "git" = English "open/navigate" → Use "Navigate to [page]"
+
+Example (Turkish):
+{{
+  "scenarios": [
+    {{
+      "title": "Film Arama ve Görüntüleme",
+      "description": "Kullanıcı film arar ve detaylarını görüntüler",
+      "steps": [
+        {{"number": 1, "action": "Ana sayfaya git"}},
+        {{"number": 2, "action": "Arama kutusuna 'inception' yaz"}},
+        {{"number": 3, "action": "Ara butonuna tıkla"}},
+        {{"number": 4, "action": "Sonuçlardan Inception filmine tıkla"}}
+      ],
+      "expectedResult": "Film detay sayfası görüntülenir",
+      "priority": "HIGH",
+      "automationType": "UI"
+    }}
+  ]
+}}
+
+Return ONLY a valid JSON object with a "scenarios" array. No markdown, no code blocks."""
+
+        # AI'dan cevap al
+        response = llm.invoke(prompt)
+
+        # Parse response
+        response_text = response.content.strip()
+
+        # Remove markdown code blocks if present
+        if response_text.startswith('```'):
+            lines = response_text.split('\n')
+            response_text = '\n'.join(lines[1:-1])
+
+        result = json.loads(response_text)
+
+        # Ensure result has scenarios
+        if 'scenarios' not in result:
+            result = {'scenarios': []}
+
+        # Add success flag
+        result['success'] = True
 
         tasks_storage[task_id]["status"] = "completed"
         tasks_storage[task_id]["result"] = result

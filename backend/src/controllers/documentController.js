@@ -388,7 +388,8 @@ export const analyzeDocumentContent = async (req, res) => {
     }
 
     // Call CrewAI to analyze the document
-    const analysisResult = await analyzeDocument(document.id);
+    // Default to 'text' template for Turkish scenario support
+    const analysisResult = await analyzeDocument(document.id, { template: 'text' });
 
     if (analysisResult.success) {
       // Save scenarios to database

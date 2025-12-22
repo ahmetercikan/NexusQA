@@ -167,8 +167,10 @@ export const analyzeTextRequirements = async (requirementText, options = {}) => 
   }
 };
 
-export const analyzeDocument = async (documentId) => {
+export const analyzeDocument = async (documentId, options = {}) => {
   try {
+    const { template = 'text' } = options;
+
     // Get document from database
     const document = await prisma.document.findUnique({
       where: { id: documentId }
@@ -187,7 +189,13 @@ export const analyzeDocument = async (documentId) => {
           type: document.type,
           id: document.id
         },
-        suite_id: null
+        suite_id: null,
+        template: template, // 'text' or 'bdd'
+        options: {
+          include_bdd_format: template === 'bdd',
+          include_edge_cases: true,
+          include_security_tests: true
+        }
       });
 
       // Check if CrewAI returned a task_id (async processing)
