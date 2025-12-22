@@ -10,6 +10,38 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /**
+ * CrewAI'ın ürettiği script'teki text locator click'lerini visibility-aware hale getir
+ */
+function fixTextLocatorClicks(script) {
+  if (!script) return script;
+
+  // Pattern: await page.click('text=Something')
+  // Replace with visibility-aware code
+  const textClickPattern = /await\s+page\.click\s*\(\s*['"`]text=([^'"`]+)['"`]\s*\)/g;
+
+  const fixedScript = script.replace(textClickPattern, (_match, textValue) => {
+    // Generate visibility-aware click code
+    return `// Click visible text element
+  {
+    const allMatches = await page.getByText('${textValue}', { exact: false }).all();
+    let visibleElement = null;
+    for (const element of allMatches) {
+      if (await element.isVisible()) {
+        visibleElement = element;
+        break;
+      }
+    }
+    if (!visibleElement) {
+      throw new Error('Text "${textValue}" found but all elements are hidden');
+    }
+    await visibleElement.click();
+  }`;
+  });
+
+  return fixedScript;
+}
+
+/**
  * Create a new scenario (manual or from document)
  * POST /api/scenarios
  */
@@ -403,8 +435,9 @@ export const automateScenario = async (req, res) => {
 
           // Agent'ten script'i al veya fallback olarak manuel oluştur
           if (finalResult?.script) {
-            scriptContent = finalResult.script;
-            console.log(`[Automate] Agent tarafından optimize edilmiş script üretildi (${scriptContent.length} karakter)`);
+            // Text locator clicks'i visibility-aware hale getir
+            scriptContent = fixTextLocatorClicks(finalResult.script);
+            console.log(`[Automate] Agent tarafından optimize edilmiş script üretildi (${scriptContent.length} karakter, text locators fixed)`);
           } else {
             // Fallback: Manuel script generator'ı kullan
             console.log(`[Automate] Agent script üretemedi, manuel generator kullanılıyor`);

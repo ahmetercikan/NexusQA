@@ -59,9 +59,13 @@ if (!fs.existsSync(screenshotDir)) {
 `;
 
   let stepCount = 0;
+  let isFirstNavigate = true;
   if (steps && Array.isArray(steps)) {
     for (const step of steps) {
-      const stepCode = generateStepCode(step, elementMappings, testData);
+      // İlk navigate adımında baseUrl veya targetUrl kullan
+      const useBaseUrl = isFirstNavigate && (step.action?.toLowerCase().includes('git') || step.action?.toLowerCase().includes('navigate') || step.action?.toLowerCase().includes('aç'));
+      const stepCode = generateStepCode(step, elementMappings, testData, useBaseUrl ? (targetUrl || baseUrl) : null);
+      if (useBaseUrl) isFirstNavigate = false;
       script += stepCode;
       stepCount++;
       
@@ -90,7 +94,7 @@ if (!fs.existsSync(screenshotDir)) {
 /**
  * Tek bir adım için Playwright kodu üret
  */
-function generateStepCode(step, elementMappings, testData) {
+function generateStepCode(step, elementMappings, testData, projectBaseUrl = null) {
   const { number, action } = step;
   const actionText = typeof action === 'string' ? action : (action?.description || action);
 
@@ -106,7 +110,7 @@ function generateStepCode(step, elementMappings, testData) {
   // Aksiyon türüne göre kod üret
   switch (actionType) {
     case 'navigate':
-      code += generateNavigationCode(actionText, selector);
+      code += generateNavigationCode(actionText, selector, projectBaseUrl);
       break;
 
     case 'click':
@@ -144,7 +148,14 @@ function generateStepCode(step, elementMappings, testData) {
 /**
  * Navigasyon kodu üret
  */
-function generateNavigationCode(actionText, selector) {
+function generateNavigationCode(actionText, selector, projectBaseUrl = null) {
+  // Öncelikle project base URL varsa onu kullan (ilk navigate için)
+  if (projectBaseUrl) {
+    return `    await page.goto('${projectBaseUrl}');
+    await page.waitForLoadState('networkidle');
+`;
+  }
+
   // URL tespit etmeye çalış
   const urlMatch = actionText.match(/https?:\/\/[^\s]+/);
   if (urlMatch) {
@@ -175,9 +186,32 @@ function generateNavigationCode(actionText, selector) {
 
   // Selector varsa tıklama ile navigasyon
   if (selector) {
-    return `    await page.click('${escapeSelector(selector)}');
+    // Text-based selector - sadece görünür olanı tıkla
+    if (selector.startsWith('text=')) {
+      const textValue = selector.replace('text=', '');
+      return `    // Navigate via visible text element
+    {
+      const allMatches = await page.getByText('${escapeString(textValue)}', { exact: false }).all();
+      let visibleElement = null;
+      for (const element of allMatches) {
+        if (await element.isVisible()) {
+          visibleElement = element;
+          break;
+        }
+      }
+      if (!visibleElement) {
+        throw new Error('Text "${escapeString(textValue)}" found but all elements are hidden');
+      }
+      await visibleElement.click();
+    }
     await page.waitForLoadState('networkidle');
 `;
+    } else {
+      // CSS selector - normal click
+      return `    await page.click('${escapeSelector(selector)}');
+    await page.waitForLoadState('networkidle');
+`;
+    }
   }
 
   return `    // TODO: Navigasyon URL'i belirle
@@ -190,8 +224,30 @@ function generateNavigationCode(actionText, selector) {
  */
 function generateClickCode(actionText, selector, mapping) {
   if (selector) {
-    return `    await page.click('${escapeSelector(selector)}');
+    // Text-based selector - sadece görünür olanı tıkla
+    if (selector.startsWith('text=')) {
+      const textValue = selector.replace('text=', '');
+      return `    // Click visible text element
+    {
+      const allMatches = await page.getByText('${escapeString(textValue)}', { exact: false }).all();
+      let visibleElement = null;
+      for (const element of allMatches) {
+        if (await element.isVisible()) {
+          visibleElement = element;
+          break;
+        }
+      }
+      if (!visibleElement) {
+        throw new Error('Text "${escapeString(textValue)}" found but all elements are hidden');
+      }
+      await visibleElement.click();
+    }
 `;
+    } else {
+      // CSS selector - normal click
+      return `    await page.click('${escapeSelector(selector)}');
+`;
+    }
   }
 
   // Selector yoksa text'e göre bulmaya çalış
@@ -734,11 +790,35 @@ function parseManualStepToCode(stepText, stepNumber, testData = {}, baseUrl = 'h
   if (lower.includes('tıkla') || lower.includes('tikla') || lower.includes('click') || lower.includes('press')) {
     // Element mapping'den gerçek selector'ı kullan
     if (mapping && mapping.selector) {
-      code += `    // Element'e tıkla (keşfedilen selector)
+      // Text-based selector - sadece görünür olanı tıkla
+      if (mapping.selector.startsWith('text=')) {
+        const textValue = mapping.selector.replace('text=', '');
+        code += `    // Element'e tıkla (visible text selector)
+    {
+      const allMatches = await page.getByText('${escapeString(textValue)}', { exact: false }).all();
+      let visibleElement = null;
+      for (const element of allMatches) {
+        if (await element.isVisible()) {
+          visibleElement = element;
+          break;
+        }
+      }
+      if (!visibleElement) {
+        throw new Error('Text "${escapeString(textValue)}" found but all elements are hidden');
+      }
+      await visibleElement.click();
+    }
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: path.join(screenshotDir, \`step-${stepNumber}-click.png\`) }).catch(() => {});
+`;
+      } else {
+        // CSS selector - normal click
+        code += `    // Element'e tıkla (keşfedilen selector)
     await page.locator('${escapeSelector(mapping.selector)}').click();
     await page.waitForTimeout(500);
     await page.screenshot({ path: path.join(screenshotDir, \`step-${stepNumber}-click.png\`) }).catch(() => {});
 `;
+      }
       return code;
     }
 
