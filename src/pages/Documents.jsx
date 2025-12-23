@@ -44,7 +44,9 @@ export default function Documents() {
       ...prev,
       [data.id]: { status: 'ANALYZING', message: data.message }
     }));
-  }, []);
+    // Show info toast when analysis starts
+    toast.info(`🔍 ${data.message || 'Senaryolar oluşturuluyor...'}`);
+  }, [toast]);
 
   const handleDocumentCompleted = useCallback((data) => {
     setProcessingStatus(prev => ({
@@ -55,9 +57,13 @@ export default function Documents() {
         scenarioCount: data.scenarioCount
       }
     }));
-    // Refresh documents list to get updated scenario counts
-    loadDocuments();
-  }, []);
+
+    // Show success toast
+    toast.success(`✅ ${data.message || `${data.scenarioCount} senaryo başarıyla oluşturuldu`}. Belge otomatik olarak temizlendi.`);
+
+    // Refresh documents list (document should be gone now)
+    setTimeout(() => loadDocuments(), 1000);
+  }, [toast]);
 
   const handleScenarioCreated = useCallback((data) => {
     setProcessingStatus(prev => ({
@@ -581,7 +587,7 @@ Ayrıca SQL injection ve XSS saldırılarına karşı test edilmesi lazım.`}
                   }`}>
                     {displayStatus === 'PENDING' && '⏳ Beklemede'}
                     {displayStatus === 'PROCESSING' && '⚙️ İşleniyor'}
-                    {displayStatus === 'ANALYZING' && '🤖 AI Analiz Ediyor'}
+                    {displayStatus === 'ANALYZING' && ' AI Analiz Ediyor'}
                     {displayStatus === 'COMPLETED' && '✓ Tamamlandı'}
                     {displayStatus === 'FAILED' && '✗ Başarısız'}
                   </span>

@@ -17,6 +17,7 @@ import httpx
 from datetime import datetime
 
 from config import API_HOST, API_PORT, BACKEND_URL
+from utils.cost_calculator import extract_usage_from_openai_response
 
 # FastAPI App
 app = FastAPI(
@@ -114,6 +115,7 @@ async def notify_backend(event: str, data: dict):
     """Backend'e webhook gönder"""
     try:
         async with httpx.AsyncClient() as client:
+            # Log gönder
             await client.post(
                 f"{BACKEND_URL}/api/tests/logs",
                 json={
@@ -123,10 +125,35 @@ async def notify_backend(event: str, data: dict):
                         "event": event,
                         "agent_id": data.get("agent_id"),
                         "run_id": data.get("run_id"),
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
+                        "cost": data.get("cost")
                     }
                 }
             )
+
+            # Eğer cost bilgisi varsa, agent'ın maliyetini güncelle
+            if data.get("cost") and data.get("agent_type"):
+                agent_type = data.get("agent_type")
+                cost = data.get("cost")
+
+                # Agent type'a göre agent ID'yi bul ve güncelle
+                try:
+                    # Önce agent'ı type'a göre bul
+                    agents_response = await client.get(f"{BACKEND_URL}/api/agents")
+                    if agents_response.status_code == 200:
+                        agents = agents_response.json().get("agents", [])
+                        agent = next((a for a in agents if a["type"] == agent_type), None)
+
+                        if agent:
+                            # Agent'ın maliyetini güncelle
+                            await client.put(
+                                f"{BACKEND_URL}/api/agents/{agent['id']}",
+                                json={"cost": cost}
+                            )
+                            print(f"💰 Agent {agent['name']} cost updated: +${cost:.6f}")
+                except Exception as agent_error:
+                    print(f"Agent cost update error: {agent_error}")
+
     except Exception as e:
         print(f"Backend notification error: {e}")
 
@@ -646,6 +673,11 @@ Return ONLY a valid JSON object with a "scenarios" array. No markdown, no code b
             max_tokens=4000
         )
 
+        # Maliyet hesapla
+        usage_info = extract_usage_from_openai_response(completion)
+        cost = usage_info["cost"]
+        print(f"💰 Document Analysis Cost: ${cost:.6f} ({usage_info['model']}, {usage_info['total_tokens']} tokens)")
+
         # Parse response
         response_text = completion.choices[0].message.content.strip()
 
@@ -660,18 +692,22 @@ Return ONLY a valid JSON object with a "scenarios" array. No markdown, no code b
         if 'scenarios' not in result:
             result = {'scenarios': []}
 
-        # Add success flag
+        # Add success flag and cost
         result['success'] = True
+        result['cost'] = cost
+        result['usage'] = usage_info
 
         tasks_storage[task_id]["status"] = "completed"
         tasks_storage[task_id]["result"] = result
 
-        # Backend'e bildir
+        # Backend'e bildir (maliyeti de gönder)
         await notify_backend("document:analyzed", {
             "document_filename": document_info.get('filename'),
             "scenario_count": len(result.get('scenarios', [])),
             "message": "Document analysis completed",
-            "level": "SUCCESS"
+            "level": "SUCCESS",
+            "cost": cost,
+            "agent_type": "TEST_ARCHITECT"  # Document analysis yapan agent
         })
 
     except Exception as e:
@@ -818,6 +854,11 @@ CRITICAL RULES:
             max_tokens=4000
         )
 
+        # Maliyet hesapla
+        usage_info = extract_usage_from_openai_response(completion)
+        cost = usage_info["cost"]
+        print(f"💰 Text Analysis Cost: ${cost:.6f} ({usage_info['model']}, {usage_info['total_tokens']} tokens)")
+
         # Response'u parse et
         response_text = completion.choices[0].message.content.strip()
 
@@ -835,14 +876,18 @@ CRITICAL RULES:
         tasks_storage[task_id]["status"] = "completed"
         tasks_storage[task_id]["result"] = {
             "success": True,
-            "scenarios": scenarios
+            "scenarios": scenarios,
+            "cost": cost,
+            "usage": usage_info
         }
 
-        # Backend'e bildir
+        # Backend'e bildir (maliyeti de gönder)
         await notify_backend("text:analyzed", {
             "scenario_count": len(scenarios),
             "message": f"Text analysis completed - {len(scenarios)} scenario(s) generated",
-            "level": "SUCCESS"
+            "level": "SUCCESS",
+            "cost": cost,
+            "agent_type": "TEST_ARCHITECT"  # Text analysis yapan agent
         })
 
     except Exception as e:

@@ -142,10 +142,7 @@ export default function TestSuites() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-white">Test Suitleri</h1>
-          <p className="text-slate-400 text-sm mt-1">
-            Test suite'lerinizi yönetin ve çalıştırın
-          </p>
+          <h1 className="text-2xl font-bold text-white">Test Run & Suit</h1>
         </div>
 
         <button

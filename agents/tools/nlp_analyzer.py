@@ -316,19 +316,75 @@ class NLPAnalyzer:
     def generate_enhanced_scenarios(self, text: str, template: str = "text") -> List[Dict[str, Any]]:
         """
         Geliştirilmiş senaryo oluştur (Sembi IQ tarzı)
-        
+
         Args:
             text: Gereksinim metni
             template: 'text' veya 'bdd'
-            
+
         Returns:
             Geliştirilmiş test senaryoları
         """
-        # Analiz yap
+        # ÖNCELİKLE: Basit adım listesi kontrolü
+        # Eğer metin satır satır basit adımlardan oluşuyorsa, TEK SENARYO oluştur
+        lines = [line.strip() for line in text.strip().split('\n') if line.strip()]
+
+        # Basit adım listesi tespiti
+        is_simple_step_list = (
+            len(lines) >= 2 and
+            len(lines) <= 10 and
+            all(len(line) < 200 for line in lines) and  # Her satır kısa
+            not any(keyword in text.lower() for keyword in [
+                'senaryo', 'scenario', 'feature', 'given', 'when', 'then',
+                'gereksinim', 'requirement', 'story', 'epic'
+            ])
+        )
+
+        if is_simple_step_list:
+            print(f"[NLP] 🎯 Basit adım listesi tespit edildi ({len(lines)} adım), TEK SENARYO oluşturuluyor...")
+
+            # Adımları oluştur
+            steps = []
+            for i, line in enumerate(lines, 1):
+                steps.append({
+                    "number": i,
+                    "action": line
+                })
+
+            # Başlık: İlk ve son adımdan oluştur
+            if len(lines) >= 2:
+                first_word = lines[0].split()[0] if lines[0].split() else "Test"
+                last_word = lines[-1].split()[0] if lines[-1].split() else "Test"
+                title = f"{first_word.capitalize()} - {last_word.capitalize()}"
+            else:
+                title = lines[0] if len(lines[0]) < 50 else "Test Senaryosu"
+
+            scenario = {
+                "title": title,
+                "description": f"{len(lines)} adımlı test senaryosu: " + " → ".join(lines),
+                "steps": steps,
+                "expectedResult": "Tüm adımlar başarıyla tamamlanır",
+                "priority": "MEDIUM",
+                "automationType": "UI",
+                "testData": {}
+            }
+
+            if template == "bdd":
+                bdd_steps = "\n".join([f"    And {line}" if i > 0 else f"    When {line}" for i, line in enumerate(lines)])
+                scenario["bddFormat"] = f"""Feature: {title}
+  Scenario: {title}
+    Given uygulama hazır
+{bdd_steps}
+    Then işlem başarılı olur"""
+
+            print(f"[NLP] ✅ Tek senaryo oluşturuldu: {title}")
+            return [scenario]
+
+        # Karmaşık metin analizi (eski yöntem)
+        print(f"[NLP] 🔍 Karmaşık metin analizi yapılıyor...")
         analysis = self.analyze_requirements(text)
-        
+
         scenarios = []
-        
+
         # 1. Temel senaryolar (User Flows'tan)
         for i, flow in enumerate(analysis['user_flows']):
             scenario = self._create_scenario_from_flow(flow, template)
