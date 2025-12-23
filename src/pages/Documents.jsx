@@ -4,7 +4,7 @@ import Modal from '../components/Modal';
 import { useDocumentUpdates } from '../hooks/useWebSocket';
 import { useToast } from '../context/ToastContext';
 import { useConfirm } from '../context/ConfirmContext';
-import { Plus, FileText, Wand2, Loader2 } from 'lucide-react';
+import { Plus, FileText, Wand2, Loader2, Compass } from 'lucide-react';
 
 /**
  * Documents Page
@@ -28,8 +28,18 @@ export default function Documents() {
   const [dragActive, setDragActive] = useState(false);
   const [processingStatus, setProcessingStatus] = useState({}); // Track real-time status per document
   const [requirementsText, setRequirementsText] = useState(''); // Text-based requirements
-  const [activeTab, setActiveTab] = useState('file'); // 'file' or 'requirements'
+  const [activeTab, setActiveTab] = useState('file'); // 'file', 'requirements', or 'autonomous'
   const [selectedTemplate, setSelectedTemplate] = useState('text'); // 'text' or 'bdd'
+
+  // Autonomous Discovery state
+  const [autonomousUrl, setAutonomousUrl] = useState('');
+  const [crawlerDepth, setCrawlerDepth] = useState(3);
+  const [maxPages, setMaxPages] = useState(50);
+  const [crawlerStrategy, setCrawlerStrategy] = useState('BFS'); // 'BFS' or 'DFS'
+  const [crawling, setCrawling] = useState(false);
+  const [ignoreLogout, setIgnoreLogout] = useState(true);
+  const [ignoreDelete, setIgnoreDelete] = useState(true);
+  const [autoFillForms, setAutoFillForms] = useState(true);
 
   // Real-time document updates
   const handleDocumentStatus = useCallback((data) => {
@@ -218,6 +228,50 @@ export default function Documents() {
     }
   };
 
+  const handleStartAutonomousCrawl = async () => {
+    if (!autonomousUrl.trim() || !selectedProject) {
+      toast.warning('Lütfen URL ve proje seçin');
+      return;
+    }
+
+    // Validate URL format
+    try {
+      new URL(autonomousUrl);
+    } catch (e) {
+      toast.error('Geçersiz URL formatı. Örnek: https://example.com');
+      return;
+    }
+
+    setCrawling(true);
+    try {
+      toast.info('🔍 Otonom keşif başlatıldı... Sayfa taraması yapılıyor.');
+
+      const response = await documentsAPI.startAutonomousCrawl({
+        url: autonomousUrl,
+        projectId: selectedProject,
+        suiteId: selectedSuite || null,
+        depth: crawlerDepth,
+        maxPages: maxPages,
+        strategy: crawlerStrategy,
+        options: {
+          ignoreLogout,
+          ignoreDelete,
+          autoFillForms,
+        }
+      });
+
+      if (response.success) {
+        toast.success(`✅ ${response.scenarioCount || 0} senaryo keşfedildi ve oluşturuldu!`);
+        setAutonomousUrl('');
+      }
+    } catch (error) {
+      console.error('Autonomous crawl error:', error);
+      toast.error('Otonom keşif sırasında hata oluştu: ' + error.message);
+    } finally {
+      setCrawling(false);
+    }
+  };
+
   const handleDeleteDocument = async (docId) => {
     const confirmed = await confirm({
       title: 'Belgeyi Sil',
@@ -307,7 +361,18 @@ export default function Documents() {
           }`}
         >
           <Wand2 className="inline mr-2" size={18} />
-          Açıklama ile Oluştur
+          Doğal Dil İle Oluştur
+        </button>
+        <button
+          onClick={() => setActiveTab('autonomous')}
+          className={`px-4 py-3 font-medium border-b-2 transition ${
+            activeTab === 'autonomous'
+              ? 'border-emerald-500 text-emerald-400'
+              : 'border-transparent text-slate-400 hover:text-slate-300'
+          }`}
+        >
+          <Compass className="inline mr-2" size={18} />
+          Otonom Keşif
         </button>
       </div>
 
@@ -543,6 +608,232 @@ Ayrıca SQL injection ve XSS saldırılarına karşı test edilmesi lazım.`}
               <>
                 <Wand2 size={20} />
                 Senaryo Oluştur
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Autonomous Discovery Tab */}
+      {activeTab === 'autonomous' && (
+        <div className="bg-slate-800/50 backdrop-blur border border-slate-700 rounded-xl p-6 space-y-6">
+          <div className="flex items-start gap-3">
+            <Compass className="text-emerald-400 mt-1" size={28} />
+            <div>
+              <h2 className="text-xl font-semibold text-white">
+                Otonom URL Keşfi
+              </h2>
+              <p className="text-slate-400 text-sm mt-1">
+                Web sitenizi otomatik olarak tarayın ve test senaryolarını keşfedin.
+                Smart Crawler, sayfalar arasında gezinerek etkileşimli elementleri bulur ve senaryolar oluşturur.
+              </p>
+            </div>
+          </div>
+
+          {/* URL Input */}
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">
+              Başlangıç URL'si *
+            </label>
+            <input
+              type="url"
+              value={autonomousUrl}
+              onChange={(e) => setAutonomousUrl(e.target.value)}
+              placeholder="https://example.com"
+              className="w-full px-4 py-3 bg-slate-900 border border-slate-600 rounded-lg text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+            />
+            <p className="text-xs text-slate-500 mt-1">
+              Crawler bu URL'den başlayarak sayfalar arasında gezinecek
+            </p>
+          </div>
+
+          {/* Configuration Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Crawler Depth */}
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Tarama Derinliği
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="10"
+                value={crawlerDepth}
+                onChange={(e) => setCrawlerDepth(parseInt(e.target.value))}
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Ana sayfadan kaç seviye derinliğe ininiz (1-10)
+              </p>
+            </div>
+
+            {/* Max Pages */}
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Maksimum Sayfa Sayısı
+              </label>
+              <input
+                type="number"
+                min="10"
+                max="500"
+                value={maxPages}
+                onChange={(e) => setMaxPages(parseInt(e.target.value))}
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Taranacak maksimum sayfa adedi (10-500)
+              </p>
+            </div>
+
+            {/* Crawler Strategy */}
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Tarama Stratejisi
+              </label>
+              <select
+                value={crawlerStrategy}
+                onChange={(e) => setCrawlerStrategy(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="BFS">🌊 BFS - Genişlik Öncelikli (Breadth-First)</option>
+                <option value="DFS">🌲 DFS - Derinlik Öncelikli (Depth-First)</option>
+              </select>
+              <p className="text-xs text-slate-500 mt-1">
+                {crawlerStrategy === 'BFS'
+                  ? 'Her seviyeyi tamamen tarayıp bir sonrakine geçer'
+                  : 'Bir dalı sonuna kadar takip eder, sonra geri döner'}
+              </p>
+            </div>
+
+            {/* Project Selection */}
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Proje Seçiniz *
+              </label>
+              <select
+                value={selectedProject}
+                onChange={(e) => setSelectedProject(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="">Proje seçiniz...</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Test Suite Selection */}
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">
+              Test Suite Seçiniz (Opsiyonel)
+            </label>
+            <select
+              value={selectedSuite}
+              onChange={(e) => setSelectedSuite(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="">Suite seçiniz...</option>
+              {suites.map((suite) => (
+                <option key={suite.id} value={suite.id}>
+                  {suite.name} ({suite.type})
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-slate-500 mt-1">
+              Keşfedilen senaryolar bu suite'e atanır
+            </p>
+          </div>
+
+          {/* Advanced Options */}
+          <div className="bg-slate-900/50 border border-slate-700 rounded-lg p-4 space-y-3">
+            <p className="text-sm font-semibold text-slate-300 mb-3">
+              🎛️ Gelişmiş Seçenekler
+            </p>
+
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={ignoreLogout}
+                onChange={(e) => setIgnoreLogout(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-emerald-600 focus:ring-emerald-500"
+              />
+              <div className="flex-1">
+                <span className="text-sm text-slate-300 group-hover:text-white transition">
+                  Logout/Çıkış Butonlarını Yoksay
+                </span>
+                <p className="text-xs text-slate-500">
+                  "Logout", "Sign Out", "Çıkış" gibi butonları tıklamaz
+                </p>
+              </div>
+            </label>
+
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={ignoreDelete}
+                onChange={(e) => setIgnoreDelete(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-emerald-600 focus:ring-emerald-500"
+              />
+              <div className="flex-1">
+                <span className="text-sm text-slate-300 group-hover:text-white transition">
+                  Delete/Sil Butonlarını Yoksay
+                </span>
+                <p className="text-xs text-slate-500">
+                  "Delete", "Remove", "Sil" gibi zararlı butonları tıklamaz
+                </p>
+              </div>
+            </label>
+
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={autoFillForms}
+                onChange={(e) => setAutoFillForms(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-emerald-600 focus:ring-emerald-500"
+              />
+              <div className="flex-1">
+                <span className="text-sm text-slate-300 group-hover:text-white transition">
+                  Formları Otomatik Doldur
+                </span>
+                <p className="text-xs text-slate-500">
+                  Input alanlarını tip tanıma ile otomatik test datası ile doldurur
+                </p>
+              </div>
+            </label>
+          </div>
+
+          {/* Info Box */}
+          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-4">
+            <p className="text-sm text-emerald-300">
+              <span className="font-semibold">🤖 Nasıl Çalışır:</span> Smart Crawler,
+              sayfa state'lerini hash'leyerek döngülerden kaçınır. Her sayfada clickable elementleri keşfeder,
+              formları doldurur ve tıklayarak yeni sayfalara geçer. AI, keşfedilen yolları analiz ederek
+              anlamlı test senaryoları üretir.
+            </p>
+          </div>
+
+          {/* Start Button */}
+          <button
+            onClick={handleStartAutonomousCrawl}
+            disabled={!autonomousUrl.trim() || !selectedProject || crawling}
+            className={`w-full py-3 px-4 rounded-lg font-bold transition flex items-center justify-center gap-2 ${
+              crawling || !autonomousUrl.trim() || !selectedProject
+                ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-900/50'
+            }`}
+          >
+            {crawling ? (
+              <>
+                <Loader2 size={20} className="animate-spin" />
+                Keşif Yapılıyor...
+              </>
+            ) : (
+              <>
+                <Compass size={20} />
+                Otonom Keşfi Başlat
               </>
             )}
           </button>

@@ -110,6 +110,7 @@ export const documentsAPI = {
   parse: (id) => api.post(`/documents/${id}/parse`),
   delete: (id) => api.delete(`/documents/${id}`),
   generateFromText: (data) => api.post('/documents/generate-from-text', data, { timeout: 180000 }), // 3 min timeout for AI
+  startAutonomousCrawl: (data) => api.post('/documents/autonomous-crawl', data, { timeout: 600000 }), // 10 min timeout for crawling
 };
 
 // ==================== SCENARIOS ====================

@@ -51,7 +51,7 @@ const agentManagementItems = [
 const testManagementItems = [
   { id: 'documents', path: '/documents', icon: FileText, label: 'Test Case Generator' },
   { id: 'test-scenarios', path: '/test-scenarios', icon: CheckSquare, label: 'Test Senaryoları' },
-  { id: 'test-suites', path: '/test-suites', icon: TestTube, label: 'Test Run & Suitleri' },
+  { id: 'test-suites', path: '/test-suites', icon: TestTube, label: 'Test Run & Suit' },
 ];
 
 export default function Sidebar({ wsConnected }) {
