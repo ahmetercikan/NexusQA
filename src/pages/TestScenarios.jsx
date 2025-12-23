@@ -50,6 +50,16 @@ export default function TestScenarios() {
     loadProjects();
   }, []);
 
+  // Load suites when project filter changes
+  useEffect(() => {
+    if (filterProjectId) {
+      loadSuites(filterProjectId);
+      setFilterSuiteId(''); // Reset suite selection when project changes
+    } else {
+      loadSuites(); // Load all suites when no project selected
+    }
+  }, [filterProjectId]);
+
   // Load scenarios when filter changes
   useEffect(() => {
     loadScenarios();
@@ -73,10 +83,13 @@ export default function TestScenarios() {
     }
   };
 
-  const loadSuites = async () => {
+  const loadSuites = async (projectId = null) => {
     try {
-      const response = await testSuitesAPI.getAll();
-      setSuites(response.data || []);
+      const params = {};
+      if (projectId) params.projectId = projectId;
+      const response = await testSuitesAPI.getAll(params);
+      console.log('Suites loaded:', response, 'for projectId:', projectId);
+      setSuites(response.data || response || []);
     } catch (error) {
       console.error('Failed to load suites:', error);
     }
@@ -85,7 +98,8 @@ export default function TestScenarios() {
   const loadProjects = async () => {
     try {
       const response = await projectsAPI.getAll();
-      setProjects(response.data || []);
+      console.log('Projects loaded:', response);
+      setProjects(response.data || response.projects || response || []);
     } catch (error) {
       console.error('Failed to load projects:', error);
     }

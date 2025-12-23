@@ -388,7 +388,8 @@ export const analyzeDocumentContent = async (req, res) => {
     }
 
     // Call CrewAI to analyze the document
-    const analysisResult = await analyzeDocument(document.id);
+    // Default to 'text' template for Turkish scenario support
+    const analysisResult = await analyzeDocument(document.id, { template: 'text' });
 
     if (analysisResult.success) {
       // Save scenarios to database
@@ -413,9 +414,28 @@ export const analyzeDocumentContent = async (req, res) => {
         createdScenarios.push(created);
       }
 
+      // Otomatik belge silme - Senaryolar oluşturulduktan sonra belgeyi sil
+      console.log(`[Document] ${createdScenarios.length} senaryo oluşturuldu, belge siliniyor: ${document.id}`);
+      try {
+        // Delete file from disk
+        if (fs.existsSync(document.filePath)) {
+          fs.unlinkSync(document.filePath);
+        }
+
+        // Delete document from database (scenarios remain with documentId = null)
+        await prisma.document.delete({
+          where: { id: parseInt(id) },
+        });
+
+        console.log(`[Document] Belge başarıyla silindi: ${document.originalName}`);
+      } catch (deleteError) {
+        console.error('[Document] Belge silinirken hata:', deleteError);
+        // Continue even if deletion fails - scenarios are already created
+      }
+
       res.json({
         success: true,
-        message: 'Document analyzed successfully',
+        message: `${createdScenarios.length} senaryo başarıyla oluşturuldu. Belge otomatik olarak temizlendi.`,
         scenarioCount: createdScenarios.length,
         scenarios: createdScenarios.map(s => ({
           id: s.id,
@@ -457,7 +477,7 @@ export const deleteDocument = async (req, res) => {
       fs.unlinkSync(document.filePath);
     }
 
-    // Delete document from database (cascades to scenarios)
+    // Delete document from database (scenarios remain with documentId = null)
     await prisma.document.delete({
       where: { id: parseInt(id) },
     });
@@ -638,6 +658,30 @@ async function generateScenariosFromTextAsync(documentId, content, projectId, su
     });
 
     console.log(`[Document ${documentId}] Completed successfully with ${createdCount} scenarios`);
+
+    // Otomatik belge silme - Senaryolar oluşturulduktan sonra belgeyi sil
+    try {
+      const document = await prisma.document.findUnique({
+        where: { id: documentId },
+      });
+
+      if (document && document.filePath && document.filePath !== 'virtual') {
+        // Delete file from disk if it's not a virtual document
+        if (fs.existsSync(document.filePath)) {
+          fs.unlinkSync(document.filePath);
+        }
+      }
+
+      // Delete document from database (scenarios remain with documentId = null)
+      await prisma.document.delete({
+        where: { id: documentId },
+      });
+
+      console.log(`[Document ${documentId}] Belge otomatik olarak temizlendi`);
+    } catch (deleteError) {
+      console.error(`[Document ${documentId}] Belge silinirken hata:`, deleteError);
+      // Continue even if deletion fails - scenarios are already created
+    }
 
     return createdCount;
   } catch (error) {

@@ -25,7 +25,8 @@ export const startAutomation = async (req, res) => {
       skipScriptGeneration = false,
       headless = true,
       browser = 'chromium',
-      slowMo = 0
+      slowMo = 0,
+      maxConcurrent = 1
     } = req.body;
 
     if (!projectId) {
@@ -49,7 +50,8 @@ export const startAutomation = async (req, res) => {
       skipScriptGeneration,
       headless,
       browser,
-      slowMo
+      slowMo,
+      maxConcurrent
     });
 
     // Hemen response dön, arka planda devam etsin

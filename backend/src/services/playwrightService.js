@@ -160,111 +160,215 @@ export async function login(page, project) {
  * Sayfadaki tüm tıklanabilir elementleri keşfet
  */
 export async function discoverClickableElements(page) {
-  return await page.evaluate(() => {
-    const elements = [];
-    const clickables = document.querySelectorAll('button, a, input[type="submit"], input[type="button"], [onclick], [role="button"]');
+  try {
+    // Sayfanın yüklenmesini bekle
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(1000); // DOM'un stabilize olması için
 
-    clickables.forEach((el, index) => {
-      const rect = el.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        elements.push({
-          index,
-          tag: el.tagName.toLowerCase(),
-          type: el.type || null,
-          text: el.innerText?.trim().substring(0, 100) || el.value || '',
-          id: el.id || null,
-          name: el.name || null,
-          className: el.className || null,
-          href: el.href || null,
-          selector: generateSelector(el),
-          xpath: generateXPath(el),
-          position: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    console.log('[Discovery] Clickable elementler aranıyor...');
+
+    const elements = await page.evaluate(() => {
+      try {
+        const elements = [];
+        const clickables = document.querySelectorAll('button, a, input[type="submit"], input[type="button"], [onclick], [role="button"]');
+
+        console.log(`[Browser Context] ${clickables.length} potansiyel clickable element bulundu`);
+
+        clickables.forEach((el, index) => {
+          try {
+            const rect = el.getBoundingClientRect();
+            const computed = getComputedStyle(el);
+
+            // Daha katı görünürlük kontrolü
+            const isDisplayed = computed.display !== 'none';
+            const isVisibilityHidden = computed.visibility === 'hidden';
+            const isOpacityZero = parseFloat(computed.opacity) === 0;
+            const hasSize = rect.width > 0 && rect.height > 0;
+            const isInViewport = rect.top >= 0 || rect.bottom > 0; // En azından kısmen viewport'ta
+
+            // Sadece gerçekten görünür elementleri al
+            const isVisible = isDisplayed && !isVisibilityHidden && !isOpacityZero && hasSize;
+
+            if (isVisible) {
+              const elementInfo = {
+                index,
+                tag: el.tagName.toLowerCase(),
+                type: el.type || null,
+                text: (el.innerText || el.textContent || el.value || '').trim().substring(0, 100),
+                id: el.id || null,
+                name: el.name || null,
+                className: typeof el.className === 'string' ? el.className : '',
+                href: el.href || null,
+                selector: generateSelector(el),
+                xpath: generateXPath(el),
+                position: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
+                isVisible: true,
+                isInViewport // Viewport'ta mı?
+              };
+
+              elements.push(elementInfo);
+            }
+          } catch (err) {
+            console.error(`[Browser Context] Element ${index} işlenirken hata:`, err.message);
+          }
         });
+
+        function generateSelector(el) {
+          try {
+            if (el.id) return `#${el.id}`;
+            if (el.name) return `[name="${el.name}"]`;
+
+            // Daha güvenli className kontrolü
+            if (el.className && typeof el.className === 'string') {
+              const classes = el.className.split(' ').filter(c => c && c.trim() && !c.includes(':') && !c.includes('['));
+              if (classes.length > 0) return `.${classes[0]}`; // Sadece ilk class'ı kullan
+            }
+
+            // Text içeriğine göre
+            const text = (el.innerText || el.textContent || '').trim();
+            if (text && text.length < 50) {
+              return `${el.tagName.toLowerCase()}:has-text("${text.substring(0, 30)}")`;
+            }
+
+            return el.tagName.toLowerCase();
+          } catch (err) {
+            return el.tagName.toLowerCase();
+          }
+        }
+
+        function generateXPath(el) {
+          try {
+            if (el.id) return `//*[@id="${el.id}"]`;
+
+            const parts = [];
+            let current = el;
+
+            while (current && current.nodeType === Node.ELEMENT_NODE && current.tagName !== 'HTML') {
+              let index = 1;
+              let sibling = current.previousSibling;
+
+              while (sibling) {
+                if (sibling.nodeType === Node.ELEMENT_NODE && sibling.nodeName === current.nodeName) {
+                  index++;
+                }
+                sibling = sibling.previousSibling;
+              }
+
+              const tagName = current.nodeName.toLowerCase();
+              const indexStr = index > 1 ? `[${index}]` : '';
+              parts.unshift(`${tagName}${indexStr}`);
+
+              current = current.parentNode;
+            }
+
+            return '//' + parts.join('/');
+          } catch (err) {
+            return `//${el.tagName.toLowerCase()}`;
+          }
+        }
+
+        console.log(`[Browser Context] ${elements.length} clickable element toplandı`);
+        return elements;
+      } catch (err) {
+        console.error('[Browser Context] Element discovery hatası:', err);
+        return [];
       }
     });
 
-    function generateSelector(el) {
-      if (el.id) return `#${el.id}`;
-      if (el.name) return `[name="${el.name}"]`;
-      if (el.className && typeof el.className === 'string') {
-        const classes = el.className.split(' ').filter(c => c && !c.includes(':'));
-        if (classes.length > 0) return `.${classes.join('.')}`;
-      }
-      return el.tagName.toLowerCase();
-    }
-
-    function generateXPath(el) {
-      if (el.id) return `//*[@id="${el.id}"]`;
-
-      const parts = [];
-      let current = el;
-
-      while (current && current.nodeType === Node.ELEMENT_NODE) {
-        let index = 0;
-        let sibling = current.previousSibling;
-
-        while (sibling) {
-          if (sibling.nodeType === Node.ELEMENT_NODE && sibling.nodeName === current.nodeName) {
-            index++;
-          }
-          sibling = sibling.previousSibling;
-        }
-
-        const tagName = current.nodeName.toLowerCase();
-        const indexStr = index > 0 ? `[${index + 1}]` : '';
-        parts.unshift(`${tagName}${indexStr}`);
-
-        current = current.parentNode;
-      }
-
-      return '/' + parts.join('/');
-    }
-
+    console.log(`[Discovery] ${elements.length} clickable element bulundu`);
     return elements;
-  });
+  } catch (error) {
+    console.error('[Discovery] discoverClickableElements hatası:', error);
+    return [];
+  }
 }
 
 /**
  * Sayfadaki form alanlarını keşfet
  */
 export async function discoverFormFields(page) {
-  return await page.evaluate(() => {
-    const fields = [];
-    const inputs = document.querySelectorAll('input, textarea, select');
+  try {
+    // Sayfanın yüklenmesini bekle
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(1000); // DOM'un stabilize olması için
 
-    inputs.forEach((el, index) => {
-      const rect = el.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        // Label bul
-        let label = '';
-        if (el.id) {
-          const labelEl = document.querySelector(`label[for="${el.id}"]`);
-          if (labelEl) label = labelEl.innerText?.trim();
-        }
-        if (!label && el.placeholder) {
-          label = el.placeholder;
-        }
-        if (!label && el.name) {
-          label = el.name;
-        }
+    console.log('[Discovery] Form alanları aranıyor...');
 
-        fields.push({
-          index,
-          tag: el.tagName.toLowerCase(),
-          type: el.type || 'text',
-          name: el.name || null,
-          id: el.id || null,
-          placeholder: el.placeholder || null,
-          label,
-          required: el.required || false,
-          selector: el.id ? `#${el.id}` : (el.name ? `[name="${el.name}"]` : `${el.tagName.toLowerCase()}[type="${el.type}"]`),
-          position: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    const fields = await page.evaluate(() => {
+      try {
+        const fields = [];
+        const inputs = document.querySelectorAll('input, textarea, select');
+
+        console.log(`[Browser Context] ${inputs.length} potansiyel form field bulundu`);
+
+        inputs.forEach((el, index) => {
+          try {
+            const rect = el.getBoundingClientRect();
+            const isVisible = rect.width > 0 || rect.height > 0 || getComputedStyle(el).display !== 'none';
+
+            if (isVisible) {
+              // Label bul
+              let label = '';
+              if (el.id) {
+                const labelEl = document.querySelector(`label[for="${el.id}"]`);
+                if (labelEl) label = (labelEl.innerText || labelEl.textContent || '').trim();
+              }
+              if (!label && el.placeholder) {
+                label = el.placeholder;
+              }
+              if (!label && el.name) {
+                label = el.name;
+              }
+              if (!label && el.getAttribute('aria-label')) {
+                label = el.getAttribute('aria-label');
+              }
+
+              // Selector oluştur
+              let selector;
+              if (el.id) {
+                selector = `#${el.id}`;
+              } else if (el.name) {
+                selector = `[name="${el.name}"]`;
+              } else if (el.placeholder) {
+                selector = `[placeholder="${el.placeholder}"]`;
+              } else {
+                const type = el.type || 'text';
+                selector = `${el.tagName.toLowerCase()}[type="${type}"]`;
+              }
+
+              fields.push({
+                index,
+                tag: el.tagName.toLowerCase(),
+                type: el.type || 'text',
+                name: el.name || null,
+                id: el.id || null,
+                placeholder: el.placeholder || null,
+                label,
+                required: el.required || false,
+                selector,
+                xpath: el.id ? `//*[@id="${el.id}"]` : (el.name ? `//*[@name="${el.name}"]` : null),
+                position: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) }
+              });
+            }
+          } catch (err) {
+            console.error(`[Browser Context] Form field ${index} işlenirken hata:`, err.message);
+          }
         });
+
+        console.log(`[Browser Context] ${fields.length} form field toplandı`);
+        return fields;
+      } catch (err) {
+        console.error('[Browser Context] Form field discovery hatası:', err);
+        return [];
       }
     });
 
+    console.log(`[Discovery] ${fields.length} form field bulundu`);
     return fields;
-  });
+  } catch (error) {
+    console.error('[Discovery] discoverFormFields hatası:', error);
+    return [];
+  }
 }
 
 /**
@@ -424,6 +528,184 @@ export async function analyzePageStructure(page) {
 }
 
 /**
+ * Sayfanın sadeleştirilmiş (AI dostu) DOM yapısını çıkarır
+ * LLM'e göndermek için optimize edilmiş format
+ */
+export async function getSimplifiedDOM(page) {
+  try {
+    const domMapJson = await page.evaluate(() => {
+      function isVisible(el) {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return (
+          style.display !== 'none' &&
+          style.visibility !== 'hidden' &&
+          parseFloat(style.opacity) !== 0 &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      }
+
+      // Sadece etkileşime girilebilir elementleri al
+      const interactables = document.querySelectorAll(
+        'button, a, input, select, textarea, [role="button"], [role="link"], [onclick], [type="submit"]'
+      );
+
+      const domMap = [];
+      let validIndex = 0;
+
+      interactables.forEach((el) => {
+        if (!isVisible(el)) return;
+
+        // Viewport kontrolü - sadece ekranda görünen elementler (mobil menü gibi gizlileri atla)
+        const rect = el.getBoundingClientRect();
+        const isInViewport = (
+          rect.top >= 0 &&
+          rect.left >= 0 &&
+          rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+          rect.right <= (window.innerWidth || document.documentElement.clientWidth) &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+
+        // Viewport dışındaki elementleri atla
+        if (!isInViewport) return;
+
+        // Her elemente geçici bir data-ai-id ata ki referans verebilelim
+        el.setAttribute('data-ai-id', validIndex);
+
+        // Element metnini topla
+        let text = '';
+        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+          // Form field - label, placeholder, name kullan
+          text = el.placeholder || el.getAttribute('aria-label') || el.name || '';
+
+          // Label elementini bul
+          if (el.id) {
+            const labelEl = document.querySelector(`label[for="${el.id}"]`);
+            if (labelEl) {
+              text = (labelEl.innerText || labelEl.textContent || '').trim() + ' ' + text;
+            }
+          }
+        } else {
+          // Button, link - innerText kullan
+          text = (el.innerText || el.textContent || '').trim();
+        }
+
+        // Temizle ve kısalt
+        text = text.replace(/\s+/g, ' ').trim().substring(0, 100);
+
+        // Test ID, ID, Name gibi önemli attributelar
+        const testId = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || '';
+        const elementId = el.id || '';
+        const elementName = el.name || '';
+        const elementType = el.type || '';
+        const ariaLabel = el.getAttribute('aria-label') || '';
+
+        // rect ve isInViewport zaten yukarıda tanımlandı, yeniden kullan
+        domMap.push({
+          id: validIndex,
+          tag: el.tagName.toLowerCase(),
+          type: elementType,
+          text: text || '(no text)',
+          testId: testId,
+          elementId: elementId,
+          name: elementName,
+          ariaLabel: ariaLabel,
+          isInViewport: true, // Zaten viewport kontrolünden geçti
+          position: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y)
+          }
+        });
+
+        validIndex++;
+      });
+
+      return domMap;
+    });
+
+    console.log(`[SimplifiedDOM] ${domMapJson.length} etkileşimli element bulundu`);
+
+    // JSON string olarak döndür (LLM'e göndermeye hazır)
+    return JSON.stringify(domMapJson, null, 2);
+
+  } catch (error) {
+    console.error('[SimplifiedDOM] Hata:', error.message);
+    return '[]';
+  }
+}
+
+/**
+ * Geçici data-ai-id'den kalıcı selector üret
+ * AI tarafından seçilen elementi DOM'da bulup robust selector oluştur
+ */
+export async function generateRobustSelector(page, tempId) {
+  try {
+    const selectorInfo = await page.evaluate((id) => {
+      const el = document.querySelector(`[data-ai-id="${id}"]`);
+      if (!el) return null;
+
+      // Öncelik sırası: testId > id > name > text
+      if (el.getAttribute('data-testid')) {
+        return {
+          selector: `[data-testid="${el.getAttribute('data-testid')}"]`,
+          type: 'testid'
+        };
+      }
+      if (el.id) {
+        return {
+          selector: `#${el.id}`,
+          type: 'id'
+        };
+      }
+      if (el.name && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA')) {
+        return {
+          selector: `[name="${el.name}"]`,
+          type: 'name'
+        };
+      }
+
+      // Text-based selector (Playwright getByRole, getByText için)
+      const text = (el.innerText || el.textContent || '').trim();
+      if (text.length > 0 && text.length < 50) {
+        return {
+          selector: null, // Playwright locator olarak döneceğiz
+          type: 'text',
+          text: text,
+          tag: el.tagName.toLowerCase()
+        };
+      }
+
+      // Son çare: CSS path oluştur
+      let cssPath = el.tagName.toLowerCase();
+      if (el.className) {
+        const classes = el.className.split(' ').filter(c => c && !c.includes('active') && !c.includes('hover'));
+        if (classes.length > 0) {
+          cssPath += '.' + classes[0];
+        }
+      }
+
+      return {
+        selector: cssPath,
+        type: 'css'
+      };
+    }, tempId);
+
+    if (!selectorInfo) {
+      throw new Error(`Element with data-ai-id="${tempId}" not found`);
+    }
+
+    console.log(`[RobustSelector] Generated: ${selectorInfo.selector || selectorInfo.text} (type: ${selectorInfo.type})`);
+    return selectorInfo;
+
+  } catch (error) {
+    console.error('[RobustSelector] Hata:', error.message);
+    return null;
+  }
+}
+
+/**
  * Test senaryosu için Playwright kodu çalıştır
  */
 export async function executeScript(scriptContent, project) {
@@ -506,5 +788,7 @@ export default {
   checkTextExists,
   waitForElement,
   analyzePageStructure,
-  executeScript
+  executeScript,
+  getSimplifiedDOM,
+  generateRobustSelector
 };

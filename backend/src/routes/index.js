@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import authRoutes from './authRoutes.js';
+import userRoutes from './userRoutes.js';
 import projectRoutes from './projectRoutes.js';
 import agentRoutes from './agentRoutes.js';
 import testRoutes from './testRoutes.js';
@@ -15,6 +17,8 @@ router.get('/', (req, res) => {
     message: 'Nexus QA API',
     version: '1.0.0',
     endpoints: {
+      auth: '/api/auth',
+      users: '/api/users',
       projects: '/api/projects',
       agents: '/api/agents',
       tests: '/api/tests',
@@ -28,6 +32,8 @@ router.get('/', (req, res) => {
 });
 
 // Mount routes
+router.use('/auth', authRoutes);
+router.use('/users', userRoutes);
 router.use('/projects', projectRoutes);
 router.use('/agents', agentRoutes);
 router.use('/tests', testRoutes);

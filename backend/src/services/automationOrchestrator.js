@@ -17,6 +17,7 @@ const BACKEND_ROOT = path.resolve(__dirname, '..', '..');
 
 import playwrightService from './playwrightService.js';
 import elementDiscovery from './elementDiscovery.js';
+import sequentialDiscovery from './sequentialDiscovery.js';
 import scriptGenerator from './scriptGenerator.js';
 import crewAIBridge from './crewAIBridge.js';
 import axios from 'axios';
@@ -44,6 +45,38 @@ const WORKFLOW_STATUS = {
 const activeWorkflows = new Map();
 
 /**
+ * CrewAI'ın ürettiği script'teki text locator click'lerini visibility-aware hale getir
+ */
+function fixTextLocatorClicks(script) {
+  if (!script) return script;
+
+  // Pattern: await page.click('text=Something')
+  // Replace with visibility-aware code
+  const textClickPattern = /await\s+page\.click\s*\(\s*['"`]text=([^'"`]+)['"`]\s*\)/g;
+
+  const fixedScript = script.replace(textClickPattern, (_match, textValue) => {
+    // Generate visibility-aware click code
+    return `// Click visible text element
+  {
+    const allMatches = await page.getByText('${textValue}', { exact: false }).all();
+    let visibleElement = null;
+    for (const element of allMatches) {
+      if (await element.isVisible()) {
+        visibleElement = element;
+        break;
+      }
+    }
+    if (!visibleElement) {
+      throw new Error('Text "${textValue}" found but all elements are hidden');
+    }
+    await visibleElement.click();
+  }`;
+  });
+
+  return fixedScript;
+}
+
+/**
  * Tam otomasyon iş akışını başlat
  */
 export async function startFullWorkflow(projectId, options = {}) {
@@ -54,7 +87,8 @@ export async function startFullWorkflow(projectId, options = {}) {
     skipScriptGeneration = false,
     headless = true,
     browser = 'chromium',
-    slowMo = 0
+    slowMo = 0,
+    maxConcurrent = 1
   } = options;
 
   const workflowId = `workflow-${Date.now()}`;
@@ -88,7 +122,8 @@ export async function startFullWorkflow(projectId, options = {}) {
     skipScriptGeneration,
     headless,
     browser,
-    slowMo
+    slowMo,
+    maxConcurrent
   }).catch(error => {
     console.error(`[Orchestrator] Workflow ${workflowId} hatası:`, error);
   });
@@ -107,7 +142,8 @@ async function executeWorkflow(workflowId, projectId, scenarioIds, options = {})
     skipScriptGeneration = false,
     headless = true,
     browser = 'chromium',
-    slowMo = 0
+    slowMo = 0,
+    maxConcurrent = 1
   } = options;
 
   const workflow = activeWorkflows.get(workflowId);
@@ -161,26 +197,32 @@ async function executeWorkflow(workflowId, projectId, scenarioIds, options = {})
       message: `${scenarios.length} test senaryosu koşuluyor...`
     });
 
-    // 3. Her senaryo için iş akışı
-    for (let i = 0; i < scenarios.length; i++) {
-      const scenario = scenarios[i];
+    // 3. Her senaryo için iş akışı - Paralel çalıştırma
+    console.log(`[Orchestrator] ${scenarios.length} senaryo ${maxConcurrent} eş zamanlı browser ile çalıştırılacak`);
+    await createLog('ORCHESTRATOR', 'INFO', `${scenarios.length} senaryo ${maxConcurrent} eş zamanlı browser ile çalıştırılacak`);
 
-      console.log(`[Orchestrator] Senaryo işleniyor [${i+1}/${scenarios.length}]: ${scenario.title}`);
+    // Paralel çalıştırma için senaryo işleme fonksiyonu
+    const processScenario = async (scenario, index) => {
+      console.log(`[Orchestrator] Senaryo işleniyor [${index+1}/${scenarios.length}]: ${scenario.title}`);
 
       emitAutomationStep({
         workflowId,
         step: 'processing_scenario',
         scenarioId: scenario.id,
         scenarioTitle: scenario.title,
-        progress: Math.round(((i + 1) / scenarios.length) * 100),
+        progress: Math.round(((index + 1) / scenarios.length) * 100),
         message: `Senaryo işleniyor: ${scenario.title}`
       });
 
       try {
         let currentScenario = scenario;
 
-        // 1. Element Discovery (eğer skip edilmemişse)
-        if (!skipElementDiscovery) {
+        // 1. Element Discovery (eğer skip edilmemişse VE mappings yoksa)
+        const hasElementMappings = currentScenario.elementMappings &&
+                                    Array.isArray(currentScenario.elementMappings) &&
+                                    currentScenario.elementMappings.length > 0;
+
+        if (!skipElementDiscovery && !hasElementMappings) {
           console.log(`[Orchestrator] Element keşfi başlatılıyor: ${scenario.title}`);
           await createLog('ORCHESTRATOR', 'INFO', `Element keşfi başlatılıyor: ${scenario.title}`);
 
@@ -195,6 +237,9 @@ async function executeWorkflow(workflowId, projectId, scenarioIds, options = {})
             console.warn(`[Orchestrator] Element keşfi başarısız: ${discoveryError.message}`);
             await createLog('ORCHESTRATOR', 'WARNING', `Element keşfi başarısız: ${discoveryError.message}`);
           }
+        } else if (hasElementMappings) {
+          console.log(`[Orchestrator] Element mappings zaten mevcut (${currentScenario.elementMappings.length} mapping), discovery atlanıyor`);
+          await createLog('ORCHESTRATOR', 'INFO', `Element mappings mevcut (${currentScenario.elementMappings.length} adet), discovery atlanıyor`);
         }
 
         // 2. Script Generation (eğer skip edilmemişse ve script yoksa)
@@ -203,7 +248,11 @@ async function executeWorkflow(workflowId, projectId, scenarioIds, options = {})
           await createLog('ORCHESTRATOR', 'INFO', `Script oluşturuluyor: ${scenario.title}`);
 
           try {
-            await generateScriptForScenario(currentScenario, project);
+            // Element mappingleri al
+            const elementMappings = currentScenario.elementMappings || [];
+            console.log(`[Orchestrator] Script generation için ${elementMappings.length} element mapping kullanılacak`);
+
+            await generateScriptForScenario(currentScenario, project, elementMappings);
             // Senaryo verisini yenile
             currentScenario = await prisma.scenario.findUnique({ where: { id: scenario.id } });
             console.log(`[Orchestrator] Script oluşturuldu: ${currentScenario.scriptPath}`);
@@ -224,7 +273,7 @@ async function executeWorkflow(workflowId, projectId, scenarioIds, options = {})
             reason: 'Script not found'
           });
           workflow.failed++;
-          continue;
+          return; // continue yerine return (fonksiyon içinde)
         }
 
         console.log(`[Orchestrator] Script path mevcut: ${currentScenario.scriptPath}`);
@@ -321,7 +370,24 @@ async function executeWorkflow(workflowId, projectId, scenarioIds, options = {})
         });
         workflow.failed++;
       }
-    }
+    };
+
+    // Paralel çalıştırma - maxConcurrent kadar eş zamanlı
+    const runInParallel = async (items, limit, processor) => {
+      const results = [];
+      for (let i = 0; i < items.length; i += limit) {
+        const batch = items.slice(i, i + limit);
+        const batchPromises = batch.map((item, batchIndex) =>
+          processor(item, i + batchIndex)
+        );
+        const batchResults = await Promise.all(batchPromises);
+        results.push(...batchResults);
+      }
+      return results;
+    };
+
+    // Senaryoları paralel çalıştır
+    await runInParallel(scenarios, maxConcurrent, processScenario);
 
     // 4. Tamamlandı
     workflow.status = WORKFLOW_STATUS.COMPLETED;
@@ -377,7 +443,7 @@ async function executeWorkflow(workflowId, projectId, scenarioIds, options = {})
  * Tek senaryo için element keşfi
  */
 export async function discoverElementsForScenario(scenario, project, options = {}) {
-  const { headless = true, browser = 'chromium', slowMo = 0 } = options;
+  const { headless = true, browser = 'chromium', slowMo = 0, sequential = true } = options;
 
   // Analist Agent'ı aktifleştir
   await updateAgentStatus('ANALYST', 'WORKING', 'Element keşfi yapılıyor...');
@@ -406,13 +472,63 @@ export async function discoverElementsForScenario(scenario, project, options = {
       }
     }
 
+    // Sayfanın tam yüklenmesini bekle
+    console.log('[Orchestrator] Sayfa yüklenmesi bekleniyor...');
+    await createLog('ANALYST', 'INFO', 'Sayfa yüklenmesi bekleniyor...');
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(2000); // Ek bekleme süresi - dinamik içerik için
+
+    // Sayfa URL ve başlığını logla
+    const currentUrl = page.url();
+    const currentTitle = await page.title();
+    console.log(`[Orchestrator] Sayfa yüklendi: ${currentTitle} (${currentUrl})`);
+    await createLog('ANALYST', 'INFO', `Sayfa yüklendi: ${currentTitle}`);
+
     // Sayfa analizini yap
     await createLog('ANALYST', 'INFO', 'Sayfa elementleri analiz ediliyor...');
+    console.log('[Orchestrator] Element discovery başlıyor...');
     const pageAnalysis = await playwrightService.analyzePageStructure(page);
+    console.log(`[Orchestrator] Sayfa analizi tamamlandı: ${pageAnalysis.totalElements} element bulundu`);
 
     // Senaryo adımları için element keşfi
-    await createLog('ANALYST', 'INFO', 'Senaryo adımları eşleştiriliyor...');
-    const discoveryResult = await elementDiscovery.discoverElementsForScenario(page, scenario, project);
+    let discoveryResult;
+
+    if (sequential) {
+      // SEQUENTIAL DISCOVERY - Her adımı çalıştırarak keşfet (Text2Test tarzı)
+      await createLog('ANALYST', 'INFO', 'Sequential element keşfi başlıyor (Text2Test mode)...');
+      console.log('[Orchestrator] Sequential discovery mode - Her adım sırayla çalıştırılacak');
+      discoveryResult = await sequentialDiscovery.discoverElementsSequentially(page, scenario, project);
+    } else {
+      // SNAPSHOT DISCOVERY - Tek seferde tüm elementleri keşfet (eski yöntem)
+      await createLog('ANALYST', 'INFO', 'Snapshot element keşfi başlıyor...');
+      console.log('[Orchestrator] Snapshot discovery mode - Tek snapshot');
+      discoveryResult = await elementDiscovery.discoverElementsForScenario(page, scenario, project);
+    }
+
+    console.log(`[Element Discovery] ${discoveryResult.mappings?.length || 0} element bulundu`, discoveryResult.mappings);
+
+    // Element mappingleri veritabanına kaydet
+    if (discoveryResult.mappings && discoveryResult.mappings.length > 0) {
+      try {
+        await prisma.scenario.update({
+          where: { id: scenario.id },
+          data: {
+            elementMappings: discoveryResult.mappings,
+            discoveryMetadata: {
+              totalElements: pageAnalysis.totalElements,
+              overallConfidence: discoveryResult.overallConfidence,
+              discoveredAt: new Date().toISOString()
+            }
+          }
+        });
+        await createLog('ANALYST', 'SUCCESS', `${discoveryResult.mappings.length} element veritabanına kaydedildi`);
+        console.log(`[Orchestrator] Element mappings veritabanına kaydedildi`);
+      } catch (dbError) {
+        console.error(`[Orchestrator] Element mappings kaydetme hatası:`, dbError.message);
+        await createLog('ANALYST', 'WARNING', `Element mappings kaydedilemedi: ${dbError.message}`);
+        // Hata olsa bile devam et - mappings hala döndürülecek
+      }
+    }
 
     // Ekran görüntüsü al
     const screenshotPath = await playwrightService.takeScreenshot(page, `scenario-${scenario.id}`);
@@ -452,6 +568,8 @@ export async function generateScriptForScenario(scenario, project, elementMappin
     try {
       await createLog('TEST_ARCHITECT', 'INFO', 'CrewAI agent çağrılıyor...');
 
+      console.log(`[Script Generation] CrewAI'a ${elementMappings.length} element mapping gönderiliyor`);
+
       const crewAIResponse = await axios.post(`${CREWAI_API_URL}/api/crew/generate-automation`, {
         scenario: {
           id: scenario.id,
@@ -463,13 +581,15 @@ export async function generateScriptForScenario(scenario, project, elementMappin
           testData: scenario.testData,
           automationType: scenario.automationType || 'UI',
           priority: scenario.priority,
-          targetUrl: scenario.targetUrl || project.baseUrl
+          targetUrl: scenario.targetUrl || project.baseUrl,
+          elementMappings: elementMappings // Element mappingleri ekle
         },
         test_suite_info: {
           name: project.name,
           type: 'UI',
           baseUrl: project.baseUrl
         },
+        element_mappings: elementMappings, // Eski format için de ekle
         backend_scenario_id: scenario.id
       }, { timeout: 180000 }); // 3 dakika timeout
 
@@ -504,17 +624,17 @@ export async function generateScriptForScenario(scenario, project, elementMappin
         }
 
         if (taskResult && taskResult.success && taskResult.code) {
-          script = taskResult.code;
+          script = fixTextLocatorClicks(taskResult.code);
           generatedByAI = true;
-          await createLog('TEST_ARCHITECT', 'SUCCESS', 'CrewAI script üretimi tamamlandı!');
+          await createLog('TEST_ARCHITECT', 'SUCCESS', 'CrewAI script üretimi tamamlandı (text locators fixed)!');
         } else if (taskResult && taskResult.code) {
           // success flag olmasa bile code varsa kullan
-          script = taskResult.code;
+          script = fixTextLocatorClicks(taskResult.code);
           generatedByAI = true;
-          await createLog('TEST_ARCHITECT', 'SUCCESS', 'AI script üretimi tamamlandı');
+          await createLog('TEST_ARCHITECT', 'SUCCESS', 'AI script üretimi tamamlandı (text locators fixed)');
         }
       } else if (crewAIResponse.data.code) {
-        script = crewAIResponse.data.code;
+        script = fixTextLocatorClicks(crewAIResponse.data.code);
         generatedByAI = true;
       }
     } catch (crewError) {

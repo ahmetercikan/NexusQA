@@ -328,6 +328,7 @@ export function AutomationProvider({ children }) {
         headless: testSettings.headless,
         browser: testSettings.browser,
         slowMo: testSettings.slowMo,
+        maxConcurrent: testSettings.maxConcurrent,
       });
 
       const data = response.data || response;

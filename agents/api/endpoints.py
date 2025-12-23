@@ -17,6 +17,7 @@ import httpx
 from datetime import datetime
 
 from config import API_HOST, API_PORT, BACKEND_URL
+from utils.cost_calculator import extract_usage_from_openai_response
 
 # FastAPI App
 app = FastAPI(
@@ -36,7 +37,7 @@ app.add_middleware(
 
 # Router
 from fastapi import APIRouter
-router = APIRouter(prefix="")
+router = APIRouter(prefix="")  # No prefix - endpoints are directly at /crew/*, /tasks/*
 
 # ============================================================
 # PYDANTIC MODELS
@@ -75,6 +76,8 @@ class DocumentAnalysisRequest(BaseModel):
     document_content: str
     document_info: Dict[str, Any]
     suite_id: Optional[int] = None
+    template: str = "text"  # 'text' or 'bdd'
+    options: Optional[Dict[str, Any]] = {}
 
 
 class TextAnalysisRequest(BaseModel):
@@ -112,6 +115,7 @@ async def notify_backend(event: str, data: dict):
     """Backend'e webhook gönder"""
     try:
         async with httpx.AsyncClient() as client:
+            # Log gönder
             await client.post(
                 f"{BACKEND_URL}/api/tests/logs",
                 json={
@@ -121,10 +125,35 @@ async def notify_backend(event: str, data: dict):
                         "event": event,
                         "agent_id": data.get("agent_id"),
                         "run_id": data.get("run_id"),
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
+                        "cost": data.get("cost")
                     }
                 }
             )
+
+            # Eğer cost bilgisi varsa, agent'ın maliyetini güncelle
+            if data.get("cost") and data.get("agent_type"):
+                agent_type = data.get("agent_type")
+                cost = data.get("cost")
+
+                # Agent type'a göre agent ID'yi bul ve güncelle
+                try:
+                    # Önce agent'ı type'a göre bul
+                    agents_response = await client.get(f"{BACKEND_URL}/api/agents")
+                    if agents_response.status_code == 200:
+                        agents = agents_response.json().get("agents", [])
+                        agent = next((a for a in agents if a["type"] == agent_type), None)
+
+                        if agent:
+                            # Agent'ın maliyetini güncelle
+                            await client.put(
+                                f"{BACKEND_URL}/api/agents/{agent['id']}",
+                                json={"cost": cost}
+                            )
+                            print(f"💰 Agent {agent['name']} cost updated: +${cost:.6f}")
+                except Exception as agent_error:
+                    print(f"Agent cost update error: {agent_error}")
+
     except Exception as e:
         print(f"Backend notification error: {e}")
 
@@ -545,7 +574,9 @@ async def analyze_document(request: DocumentAnalysisRequest, background_tasks: B
         task_id,
         request.document_content,
         request.document_info,
-        request.suite_id
+        request.suite_id,
+        request.template,
+        request.options
     )
 
     return {
@@ -556,24 +587,127 @@ async def analyze_document(request: DocumentAnalysisRequest, background_tasks: B
     }
 
 
-async def execute_document_analysis(task_id: str, document_content: str, document_info: dict, suite_id: int):
-    """Belge analizi çalıştırma"""
+async def execute_document_analysis(task_id: str, document_content: str, document_info: dict, suite_id: int, template: str = "text", options: dict = {}):
+    """Belge analizi çalıştırma - AI kullanarak"""
     tasks_storage[task_id]["status"] = "running"
 
     try:
-        from crews.document_crew import document_crew
+        import json
+        from openai import OpenAI
 
-        result = document_crew.analyze_document(document_content, document_info)
+        # Initialize OpenAI client
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        # AI prompt - doküman analizi ve test senaryoları üretimi
+        # Calculate document size for guidance
+        doc_length = len(document_content)
+        doc_words = len(document_content.split())
+
+        # For very long documents, use a more powerful model
+        model_name = "gpt-4o-mini"
+        if doc_length > 50000:
+            print(f"[DocumentAnalysis] Large document detected ({doc_length} chars), using gpt-4o for better analysis")
+            model_name = "gpt-4o"
+
+        prompt = f"""Analyze the following document and generate test scenarios.
+
+Document Statistics:
+- Length: {doc_length} characters
+- Words: ~{doc_words} words
+
+Document content:
+{document_content}
+
+Instructions:
+- CRITICAL: Read the ENTIRE document from beginning to end before generating scenarios
+- Do NOT skip any sections, chapters, or requirements
+- The document may be in Turkish or English
+- Generate scenarios based on document complexity and ALL requirements found:
+  * Simple single-sentence requirements → 1-2 scenarios
+  * Medium documents with multiple features → 3-7 scenarios
+  * Complex PRD documents → 8-15+ scenarios
+- IMPORTANT: Extract scenarios from ALL sections of the document, not just the beginning
+- Each scenario should have:
+  * title: Brief descriptive title (in Turkish if document is Turkish)
+  * description: What the test does (in Turkish if document is Turkish)
+  * steps: Array of steps with number and action (use clear, specific action verbs)
+  * expectedResult: What should happen (in Turkish if document is Turkish)
+  * priority: HIGH, MEDIUM, or LOW
+  * automationType: UI, API, or INTEGRATION
+
+IMPORTANT ACTION KEYWORDS:
+- Turkish "ara" / "arama" = English "search" → Use "Search for [term]" or "Type '[term]' into search box"
+- Turkish "tıkla" = English "click" → Use "Click [element]"
+- Turkish "yaz" / "gir" = English "type/fill" → Use "Type '[text]' into [field]"
+- Turkish "aç" / "git" = English "open/navigate" → Use "Navigate to [page]"
+
+Example (Turkish):
+{{
+  "scenarios": [
+    {{
+      "title": "Film Arama ve Görüntüleme",
+      "description": "Kullanıcı film arar ve detaylarını görüntüler",
+      "steps": [
+        {{"number": 1, "action": "Ana sayfaya git"}},
+        {{"number": 2, "action": "Arama kutusuna 'inception' yaz"}},
+        {{"number": 3, "action": "Ara butonuna tıkla"}},
+        {{"number": 4, "action": "Sonuçlardan Inception filmine tıkla"}}
+      ],
+      "expectedResult": "Film detay sayfası görüntülenir",
+      "priority": "HIGH",
+      "automationType": "UI"
+    }}
+  ]
+}}
+
+Return ONLY a valid JSON object with a "scenarios" array. No markdown, no code blocks."""
+
+        # AI'dan cevap al (use upgraded model for large documents)
+        completion = openai_client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "You are a test automation expert who generates test scenarios from documents."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=4000
+        )
+
+        # Maliyet hesapla
+        usage_info = extract_usage_from_openai_response(completion)
+        cost = usage_info["cost"]
+        print(f"💰 Document Analysis Cost: ${cost:.6f} ({usage_info['model']}, {usage_info['total_tokens']} tokens)")
+
+        # Parse response
+        response_text = completion.choices[0].message.content.strip()
+
+        # Remove markdown code blocks if present
+        if response_text.startswith('```'):
+            lines = response_text.split('\n')
+            response_text = '\n'.join(lines[1:-1])
+
+        result = json.loads(response_text)
+
+        # Ensure result has scenarios
+        if 'scenarios' not in result:
+            result = {'scenarios': []}
+
+        # Add success flag and cost
+        result['success'] = True
+        result['cost'] = cost
+        result['usage'] = usage_info
 
         tasks_storage[task_id]["status"] = "completed"
         tasks_storage[task_id]["result"] = result
 
-        # Backend'e bildir
+        # Backend'e bildir (maliyeti de gönder)
         await notify_backend("document:analyzed", {
             "document_filename": document_info.get('filename'),
             "scenario_count": len(result.get('scenarios', [])),
             "message": "Document analysis completed",
-            "level": "SUCCESS"
+            "level": "SUCCESS",
+            "cost": cost,
+            "agent_type": "TEST_ARCHITECT"  # Document analysis yapan agent
         })
 
     except Exception as e:
@@ -624,23 +758,37 @@ async def execute_text_analysis(task_id: str, requirement_text: str, template: s
 
     try:
         import json
-        from config import llm
+        from openai import OpenAI
+
+        # Initialize OpenAI client
+        openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
         # AI prompt - text'ten test senaryoları üret
+        text_length = len(requirement_text)
+        text_words = len(requirement_text.split())
+
         prompt = f"""Analyze the following test requirement and generate test scenarios.
+
+Text Statistics:
+- Length: {text_length} characters
+- Words: ~{text_words} words
 
 Requirement text:
 {requirement_text}
 
 Instructions:
-- If the text is a single simple sentence, create ONLY ONE scenario
-- If the text describes multiple features or complex requirements, create multiple scenarios
+- CRITICAL: Read the ENTIRE text carefully before generating scenarios
+- Adjust scenario count based on requirement complexity:
+  * Single simple action → 1 scenario
+  * Multiple related actions → 2-4 scenarios
+  * Complex multi-feature requirements → 5-10+ scenarios
+- IMPORTANT: Don't create unnecessary scenarios - match the actual requirements
 - The text may be in Turkish or English
 - Each scenario should have:
-  * title: Brief descriptive title
-  * description: What the test does
+  * title: Brief descriptive title (in Turkish if text is Turkish)
+  * description: What the test does (in Turkish if text is Turkish)
   * steps: Array of steps with number and action (use clear, specific action verbs)
-  * expectedResult: What should happen
+  * expectedResult: What should happen (in Turkish if text is Turkish)
   * priority: HIGH, MEDIUM, or LOW
   * automationType: UI, API, or INTEGRATION
 
@@ -696,10 +844,23 @@ CRITICAL RULES:
 - Return ONLY the JSON array, no markdown, no additional text"""
 
         # LLM'den yanıt al
-        response = llm.call(prompt)
+        completion = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a test automation expert who generates test scenarios from requirements."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=4000
+        )
+
+        # Maliyet hesapla
+        usage_info = extract_usage_from_openai_response(completion)
+        cost = usage_info["cost"]
+        print(f"💰 Text Analysis Cost: ${cost:.6f} ({usage_info['model']}, {usage_info['total_tokens']} tokens)")
 
         # Response'u parse et
-        response_text = response if isinstance(response, str) else str(response)
+        response_text = completion.choices[0].message.content.strip()
 
         # JSON'u çıkar (markdown code block içinde olabilir)
         if '```json' in response_text:
@@ -715,14 +876,18 @@ CRITICAL RULES:
         tasks_storage[task_id]["status"] = "completed"
         tasks_storage[task_id]["result"] = {
             "success": True,
-            "scenarios": scenarios
+            "scenarios": scenarios,
+            "cost": cost,
+            "usage": usage_info
         }
 
-        # Backend'e bildir
+        # Backend'e bildir (maliyeti de gönder)
         await notify_backend("text:analyzed", {
             "scenario_count": len(scenarios),
             "message": f"Text analysis completed - {len(scenarios)} scenario(s) generated",
-            "level": "SUCCESS"
+            "level": "SUCCESS",
+            "cost": cost,
+            "agent_type": "TEST_ARCHITECT"  # Text analysis yapan agent
         })
 
     except Exception as e:

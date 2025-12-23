@@ -101,13 +101,19 @@ export async function matchStepToElements(page, step) {
   const { action, number } = step;
   const actionText = typeof action === 'string' ? action : (action?.description || '');
 
+  console.log(`[MatchStep] Step ${number}: "${actionText}"`);
+
   // Aksiyon türünü belirle
   const actionType = inferActionType(actionText);
   const targetHints = inferTargetElement(actionText);
 
+  console.log(`[MatchStep] ActionType: ${actionType}, TargetHints: ${targetHints ? targetHints.join(', ') : 'none'}`);
+
   // Sayfadaki elementleri keşfet
   const clickables = await playwrightService.discoverClickableElements(page);
   const formFields = await playwrightService.discoverFormFields(page);
+
+  console.log(`[MatchStep] Bulunan elementler: ${clickables.length} clickable, ${formFields.length} form field`);
 
   const candidates = [];
 
@@ -116,28 +122,53 @@ export async function matchStepToElements(page, step) {
     // Form alanlarında ara
     for (const field of formFields) {
       let score = 0;
-      const fieldText = `${field.label} ${field.name} ${field.placeholder} ${field.id}`.toLowerCase();
+      const fieldLabel = (field.label || '').toLowerCase();
+      const fieldName = (field.name || '').toLowerCase();
+      const fieldPlaceholder = (field.placeholder || '').toLowerCase();
+      const fieldId = (field.id || '').toLowerCase();
+      const allFieldText = `${fieldLabel} ${fieldName} ${fieldPlaceholder} ${fieldId}`;
 
       // Hedef element ipuçlarıyla eşleştir
       if (targetHints) {
         for (const hint of targetHints) {
-          if (fieldText.includes(hint)) {
+          if (allFieldText.includes(hint)) {
             score += 50;
           }
         }
       }
 
-      // Step metnindeki kelimeleri ara
-      const stepWords = actionText.toLowerCase().split(/\s+/);
+      // Step metnindeki önemli kelimeleri ara
+      const stepWords = actionText
+        .toLowerCase()
+        .replace(/type|gir|yaz|doldur|into|field|alan/gi, '') // Noise kelimeleri kaldır
+        .replace(/['"]/g, '') // Tırnak işaretlerini kaldır
+        .split(/\s+/)
+        .filter(w => w.length > 2);
+
       for (const word of stepWords) {
-        if (word.length > 2 && fieldText.includes(word)) {
-          score += 10;
+        // Label'da tam eşleşme - yüksek skor
+        if (fieldLabel === word) {
+          score += 60;
+        }
+        // Label veya placeholder'da kelime var - orta skor
+        else if (fieldLabel.includes(word) || fieldPlaceholder.includes(word)) {
+          score += 30;
+        }
+        // Name veya ID'de var - düşük skor
+        else if (fieldName.includes(word) || fieldId.includes(word)) {
+          score += 15;
         }
       }
 
       // Input türü eşleşmesi
       if (targetHints?.includes('email') && field.type === 'email') score += 30;
       if (targetHints?.includes('password') && field.type === 'password') score += 30;
+
+      // Özel kelime eşleşmeleri
+      if (actionText.toLowerCase().includes('email') && field.type === 'email') score += 25;
+      if (actionText.toLowerCase().includes('şifre') || actionText.toLowerCase().includes('password')) {
+        if (field.type === 'password') score += 25;
+      }
 
       if (score > 0) {
         candidates.push({
@@ -154,28 +185,62 @@ export async function matchStepToElements(page, step) {
     // Tıklanabilir elementlerde ara
     for (const clickable of clickables) {
       let score = 0;
-      const elementText = `${clickable.text} ${clickable.id} ${clickable.name} ${clickable.className}`.toLowerCase();
+      const elementText = (clickable.text || '').toLowerCase();
+      const elementId = (clickable.id || '').toLowerCase();
+      const elementName = (clickable.name || '').toLowerCase();
+      const elementClassName = (clickable.className || '').toLowerCase();
+      const allText = `${elementText} ${elementId} ${elementName} ${elementClassName}`;
 
       // Hedef element ipuçlarıyla eşleştir
       if (targetHints) {
         for (const hint of targetHints) {
-          if (elementText.includes(hint)) {
+          if (allText.includes(hint)) {
             score += 50;
           }
         }
       }
 
-      // Step metnindeki kelimeleri ara
-      const stepWords = actionText.toLowerCase().split(/\s+/);
+      // Step metnindeki önemli kelimeleri ara
+      const stepWords = actionText
+        .toLowerCase()
+        .replace(/click|tıkla|tikla|button|butonu/gi, '') // Noise kelimeleri kaldır
+        .split(/\s+/)
+        .filter(w => w.length > 2);
+
       for (const word of stepWords) {
-        if (word.length > 2 && elementText.includes(word)) {
+        // Tam tam eşleşme (tüm step metni element text ile eşleşiyor) - ÇOK yüksek skor
+        const cleanStepText = stepWords.join(' ');
+        if (elementText === cleanStepText) {
+          score += 100;
+        }
+        // Tek kelime tam eşleşme - yüksek skor
+        else if (elementText === word) {
+          score += 80;
+        }
+        // Element text sadece bu kelimeden oluşuyor - çok yüksek skor
+        else if (elementText.trim() === word) {
+          score += 90;
+        }
+        // Text içinde kelime var - orta skor
+        else if (elementText.includes(word)) {
+          score += 20;
+        }
+        // ID veya name'de var - düşük skor
+        else if (elementId.includes(word) || elementName.includes(word)) {
           score += 10;
+        }
+        // ClassName'de var - çok düşük skor
+        else if (elementClassName.includes(word)) {
+          score += 3;
         }
       }
 
       // Buton türü bonus
       if (clickable.tag === 'button') score += 5;
       if (clickable.type === 'submit') score += 10;
+
+      // Viewport'ta olan elementlere bonus - daha erişilebilir
+      if (clickable.isInViewport) score += 15;
 
       if (score > 0) {
         candidates.push({
@@ -193,6 +258,12 @@ export async function matchStepToElements(page, step) {
 
   // En iyi eşleşmeyi döndür
   const bestMatch = candidates.length > 0 ? candidates[0] : null;
+
+  console.log(`[MatchStep] ${candidates.length} aday bulundu, bestMatch: ${bestMatch ? `${bestMatch.selector} (score: ${bestMatch.score})` : 'YOK'}`);
+
+  if (bestMatch) {
+    console.log(`[MatchStep] Best match detayları: text="${bestMatch.text || bestMatch.label || 'N/A'}", tag="${bestMatch.tag || 'N/A'}", type="${bestMatch.type || 'N/A'}"`);
+  }
 
   return {
     stepNumber: number,
@@ -212,6 +283,9 @@ export async function discoverElementsForScenario(page, scenario, project) {
   const { steps, targetUrl } = scenario;
   const baseUrl = targetUrl || project.baseUrl;
 
+  console.log(`[ElementDiscovery] Senaryo için element keşfi başlıyor: ${scenario.title}`);
+  console.log(`[ElementDiscovery] ${steps?.length || 0} adım keşfedilecek`);
+
   const results = {
     scenarioId: scenario.id,
     scenarioTitle: scenario.title,
@@ -222,6 +296,7 @@ export async function discoverElementsForScenario(page, scenario, project) {
   };
 
   if (!steps || !Array.isArray(steps) || steps.length === 0) {
+    console.log('[ElementDiscovery] Senaryo adımları bulunamadı!');
     return {
       ...results,
       error: 'Senaryo adımları bulunamadı'
@@ -232,36 +307,53 @@ export async function discoverElementsForScenario(page, scenario, project) {
   let totalConfidence = 0;
 
   for (const step of steps) {
-    const stepResult = await matchStepToElements(page, step);
+    console.log(`[ElementDiscovery] Adım ${step.number} eşleştiriliyor: ${step.action}`);
 
-    if (stepResult.bestMatch && stepResult.confidence > 20) {
-      results.mappings.push({
-        stepNumber: step.number,
-        action: step.action,
-        actionType: stepResult.actionType,
-        selector: stepResult.bestMatch.selector,
-        xpath: stepResult.bestMatch.xpath,
-        elementType: stepResult.bestMatch.tag || stepResult.bestMatch.type,
-        elementText: stepResult.bestMatch.text || stepResult.bestMatch.label,
-        confidence: stepResult.confidence,
-        alternatives: stepResult.alternativeCandidates?.map(c => ({
-          selector: c.selector,
-          text: c.text || c.label,
-          score: c.score
-        }))
-      });
-      totalConfidence += stepResult.confidence;
-    } else {
+    try {
+      const stepResult = await matchStepToElements(page, step);
+      console.log(`[ElementDiscovery] Adım ${step.number} sonucu: confidence=${stepResult.confidence}, bestMatch=${stepResult.bestMatch ? 'var' : 'yok'}`);
+
+      if (stepResult.bestMatch && stepResult.confidence >= 10) {
+        const mapping = {
+          stepNumber: step.number,
+          action: step.action,
+          actionType: stepResult.actionType,
+          selector: stepResult.bestMatch.selector,
+          xpath: stepResult.bestMatch.xpath,
+          elementType: stepResult.bestMatch.tag || stepResult.bestMatch.type,
+          elementText: stepResult.bestMatch.text || stepResult.bestMatch.label,
+          confidence: stepResult.confidence,
+          alternatives: stepResult.alternativeCandidates?.map(c => ({
+            selector: c.selector,
+            text: c.text || c.label,
+            score: c.score
+          }))
+        };
+        results.mappings.push(mapping);
+        totalConfidence += stepResult.confidence;
+        console.log(`[ElementDiscovery] ✓ Adım ${step.number} eşleştirildi: ${mapping.selector} (confidence: ${stepResult.confidence})`);
+      } else {
+        results.unmappedSteps.push({
+          stepNumber: step.number,
+          action: step.action,
+          reason: stepResult.confidence === 0 ? 'Eşleşen element bulunamadı' : `Düşük güven skoru (${stepResult.confidence})`
+        });
+        console.log(`[ElementDiscovery] ✗ Adım ${step.number} eşleştirilemedi: ${stepResult.confidence === 0 ? 'element yok' : `düşük skor (${stepResult.confidence})`}`);
+      }
+    } catch (error) {
+      console.error(`[ElementDiscovery] Adım ${step.number} hatası:`, error);
       results.unmappedSteps.push({
         stepNumber: step.number,
         action: step.action,
-        reason: stepResult.confidence === 0 ? 'Eşleşen element bulunamadı' : 'Düşük güven skoru'
+        reason: `Hata: ${error.message}`
       });
     }
   }
 
   // Ortalama güven skoru
   results.overallConfidence = steps.length > 0 ? Math.round(totalConfidence / steps.length) : 0;
+
+  console.log(`[ElementDiscovery] Toplam ${results.mappings.length} mapping, ${results.unmappedSteps.length} unmapped, confidence: ${results.overallConfidence}%`);
 
   return results;
 }

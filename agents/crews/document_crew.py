@@ -161,7 +161,7 @@ class DocumentCrew:
             print(f"✅ Edge Cases: {len(analysis['edge_cases'])}")
             
             # 2. CrewAI ile detaylı analiz (opsiyonel - eğer CrewAI çalışıyorsa)
-            print("\n🤖 CrewAI Ekibi ile Analiz Yapılıyor...")
+            print("\n CrewAI Ekibi ile Analiz Yapılıyor...")
             from tasks.document_analysis_tasks import create_text_analysis_task
             
             analysis_task = create_text_analysis_task(

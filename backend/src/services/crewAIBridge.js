@@ -156,9 +156,20 @@ export const analyzeTextRequirements = async (requirementText, options = {}) => 
 
       return [];
     } catch (crewError) {
-      console.error('CrewAI error:', crewError.message);
-      // Any CrewAI error: fall back to simulation
-      console.log('Falling back to simulation mode due to CrewAI error');
+      console.error('❌ CrewAI ERROR - Text Analysis:', {
+        error: crewError.message,
+        code: crewError.code,
+        endpoint: '/crew/text-analysis'
+      });
+
+      // Check if CrewAI service is running
+      if (crewError.code === 'ECONNREFUSED' || crewError.message.includes('ECONNREFUSED')) {
+        console.error('⚠️ CRITICAL: CrewAI backend is NOT running! Start it with: cd agents && python main.py');
+        throw new Error('CrewAI backend is not running. Please start the agents backend service.');
+      }
+
+      // Any other CrewAI error: fall back to simulation
+      console.warn('⚠️ Falling back to SIMULATION mode - AI not used!');
       return simulateTextAnalysis(requirementText, template);
     }
   } catch (error) {
@@ -167,8 +178,10 @@ export const analyzeTextRequirements = async (requirementText, options = {}) => 
   }
 };
 
-export const analyzeDocument = async (documentId) => {
+export const analyzeDocument = async (documentId, options = {}) => {
   try {
+    const { template = 'text' } = options;
+
     // Get document from database
     const document = await prisma.document.findUnique({
       where: { id: documentId }
@@ -187,7 +200,13 @@ export const analyzeDocument = async (documentId) => {
           type: document.type,
           id: document.id
         },
-        suite_id: null
+        suite_id: null,
+        template: template, // 'text' or 'bdd'
+        options: {
+          include_bdd_format: template === 'bdd',
+          include_edge_cases: true,
+          include_security_tests: true
+        }
       });
 
       // Check if CrewAI returned a task_id (async processing)
@@ -223,9 +242,22 @@ export const analyzeDocument = async (documentId) => {
 
       return response.data;
     } catch (crewError) {
-      console.error('CrewAI error:', crewError.message);
-      // Any CrewAI error: fall back to simulation
-      console.log('Falling back to simulation mode due to CrewAI error');
+      console.error('❌ CrewAI ERROR - Document Analysis:', {
+        error: crewError.message,
+        code: crewError.code,
+        endpoint: '/crew/document-analysis',
+        documentId: documentId,
+        documentName: document.originalName
+      });
+
+      // Check if CrewAI service is running
+      if (crewError.code === 'ECONNREFUSED' || crewError.message.includes('ECONNREFUSED')) {
+        console.error('⚠️ CRITICAL: CrewAI backend is NOT running! Start it with: cd agents && python main.py');
+        throw new Error('CrewAI backend is not running. Please start the agents backend service.');
+      }
+
+      // Any other CrewAI error: fall back to simulation
+      console.warn('⚠️ Falling back to SIMULATION mode - AI not used!');
       return simulateDocumentAnalysis(documentId, document);
     }
   } catch (error) {
