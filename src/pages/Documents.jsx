@@ -808,7 +808,7 @@ Ayrıca SQL injection ve XSS saldırılarına karşı test edilmesi lazım.`}
           {/* Info Box */}
           <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-4">
             <p className="text-sm text-emerald-300">
-              <span className="font-semibold">🤖 Nasıl Çalışır:</span> Smart Crawler,
+              <span className="font-semibold">Nasıl Çalışır:</span> Smart Crawler,
               sayfa state'lerini hash'leyerek döngülerden kaçınır. Her sayfada clickable elementleri keşfeder,
               formları doldurur ve tıklayarak yeni sayfalara geçer. AI, keşfedilen yolları analiz ederek
               anlamlı test senaryoları üretir.

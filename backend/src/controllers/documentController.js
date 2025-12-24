@@ -699,7 +699,7 @@ async function generateScenariosFromTextAsync(documentId, content, projectId, su
  * POST /documents/autonomous-crawl
  * Start autonomous URL crawling to discover test scenarios
  */
-exports.startAutonomousCrawl = async (req, res) => {
+export const startAutonomousCrawl = async (req, res) => {
   try {
     const { url, projectId, suiteId, depth = 3, maxPages = 50, strategy = 'BFS', options = {} } = req.body;
 

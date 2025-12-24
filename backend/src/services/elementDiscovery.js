@@ -279,12 +279,13 @@ export async function matchStepToElements(page, step) {
 /**
  * Tüm senaryo adımları için element keşfi yap
  */
-export async function discoverElementsForScenario(page, scenario, project) {
+export async function discoverElementsForScenario(page, scenario, project, options = {}) {
+  const { sequential = false } = options; // Sequential mode: her adımı execute ederek ilerle
   const { steps, targetUrl } = scenario;
   const baseUrl = targetUrl || project.baseUrl;
 
   console.log(`[ElementDiscovery] Senaryo için element keşfi başlıyor: ${scenario.title}`);
-  console.log(`[ElementDiscovery] ${steps?.length || 0} adım keşfedilecek`);
+  console.log(`[ElementDiscovery] ${steps?.length || 0} adım keşfedilecek (sequential: ${sequential})`);
 
   const results = {
     scenarioId: scenario.id,
@@ -332,6 +333,23 @@ export async function discoverElementsForScenario(page, scenario, project) {
         results.mappings.push(mapping);
         totalConfidence += stepResult.confidence;
         console.log(`[ElementDiscovery] ✓ Adım ${step.number} eşleştirildi: ${mapping.selector} (confidence: ${stepResult.confidence})`);
+
+        // Sequential mode: Adımı execute et (sayfa değişirse sonraki adımlar yeni sayfada aranır)
+        if (sequential) {
+          console.log(`[ElementDiscovery] Sequential mode: Adım ${step.number} execute ediliyor...`);
+          try {
+            await executeStep(page, mapping);
+            // Sayfa değişikliğini bekle
+            await page.waitForTimeout(1000);
+            await page.waitForLoadState('domcontentloaded').catch(() => {});
+
+            const newUrl = page.url();
+            console.log(`[ElementDiscovery] Adım execute edildi, mevcut URL: ${newUrl}`);
+          } catch (execError) {
+            console.warn(`[ElementDiscovery] Adım ${step.number} execute edilemedi: ${execError.message}`);
+            // Execute hatasında devam et ama bir sonraki adımda sorun olabilir
+          }
+        }
       } else {
         results.unmappedSteps.push({
           stepNumber: step.number,
@@ -339,6 +357,12 @@ export async function discoverElementsForScenario(page, scenario, project) {
           reason: stepResult.confidence === 0 ? 'Eşleşen element bulunamadı' : `Düşük güven skoru (${stepResult.confidence})`
         });
         console.log(`[ElementDiscovery] ✗ Adım ${step.number} eşleştirilemedi: ${stepResult.confidence === 0 ? 'element yok' : `düşük skor (${stepResult.confidence})`}`);
+
+        // Sequential mode'da bir adım bulunamazsa durakla (sonraki adımlar yanlış sayfada olabilir)
+        if (sequential) {
+          console.warn(`[ElementDiscovery] Sequential mode: Adım ${step.number} bulunamadığı için duraklatılıyor`);
+          break; // Sonraki adımlara geçme
+        }
       }
     } catch (error) {
       console.error(`[ElementDiscovery] Adım ${step.number} hatası:`, error);
@@ -347,6 +371,11 @@ export async function discoverElementsForScenario(page, scenario, project) {
         action: step.action,
         reason: `Hata: ${error.message}`
       });
+
+      if (sequential) {
+        console.warn(`[ElementDiscovery] Sequential mode: Hata nedeniyle duraklatılıyor`);
+        break;
+      }
     }
   }
 
@@ -356,6 +385,52 @@ export async function discoverElementsForScenario(page, scenario, project) {
   console.log(`[ElementDiscovery] Toplam ${results.mappings.length} mapping, ${results.unmappedSteps.length} unmapped, confidence: ${results.overallConfidence}%`);
 
   return results;
+}
+
+/**
+ * Bir adımı execute et (sequential discovery için)
+ */
+async function executeStep(page, mapping) {
+  const { actionType, selector, elementText } = mapping;
+
+  console.log(`[ExecuteStep] Executing ${actionType} on ${selector}`);
+
+  try {
+    if (actionType === 'fill') {
+      // Input field'a değer gir
+      // Eğer step action'ında bir değer varsa onu kullan, yoksa test datası
+      const value = extractValueFromAction(mapping.action) || 'test@example.com';
+      await page.fill(selector, value);
+      console.log(`[ExecuteStep] Filled ${selector} with "${value}"`);
+    }
+    else if (actionType === 'click') {
+      // Element'e tıkla
+      await page.click(selector);
+      console.log(`[ExecuteStep] Clicked ${selector}`);
+    }
+    else if (actionType === 'check') {
+      // Checkbox/radio seç
+      await page.check(selector);
+      console.log(`[ExecuteStep] Checked ${selector}`);
+    }
+    else if (actionType === 'select') {
+      // Dropdown'dan seç
+      await page.selectOption(selector, { index: 1 });
+      console.log(`[ExecuteStep] Selected option from ${selector}`);
+    }
+    // navigate, verify, wait için execute etme - sadece keşif yap
+  } catch (error) {
+    console.error(`[ExecuteStep] Error executing step: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Action metninden değer çıkar (örn: "Type 'test@example.com' into email field" -> "test@example.com")
+ */
+function extractValueFromAction(actionText) {
+  const matches = actionText.match(/['"]([^'"]+)['"]/);
+  return matches ? matches[1] : null;
 }
 
 /**

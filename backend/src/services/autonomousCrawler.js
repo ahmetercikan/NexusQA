@@ -133,7 +133,7 @@ async function autoFillForm(page) {
 }
 
 /**
- * Discover clickable elements on page
+ * Discover clickable and interactive elements on page
  */
 async function discoverClickableElements(page, currentUrl, options) {
   const elements = await page.evaluate((baseUrl) => {
@@ -145,7 +145,7 @@ async function discoverClickableElements(page, currentUrl, options) {
       const href = link.href;
       const text = link.textContent.trim();
 
-      // Only include same-origin links
+      // Include same-origin links and hash links for SPAs
       try {
         const linkUrl = new URL(href);
         const baseUrlObj = new URL(baseUrl);
@@ -168,13 +168,92 @@ async function discoverClickableElements(page, currentUrl, options) {
     const buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
     buttons.forEach((button, index) => {
       const text = button.textContent?.trim() || button.value || '';
-      discovered.push({
-        type: 'button',
-        selector: `button:nth-of-type(${index + 1})`,
-        text,
-        index
-      });
+      if (text) { // Only include buttons with text
+        discovered.push({
+          type: 'button',
+          selector: `button:nth-of-type(${index + 1})`,
+          text,
+          index
+        });
+      }
     });
+
+    // Find all text inputs and textareas
+    const textInputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="password"], input[type="search"], input[type="url"], input:not([type]), textarea');
+    textInputs.forEach((input, index) => {
+      const placeholder = input.placeholder || '';
+      const name = input.name || input.id || '';
+      const label = input.getAttribute('aria-label') || '';
+      const text = placeholder || name || label || `Input field ${index + 1}`;
+
+      if (input.offsetParent !== null) { // Only visible inputs
+        discovered.push({
+          type: 'input',
+          selector: input.id ? `#${input.id}` : `input:nth-of-type(${index + 1})`,
+          text,
+          inputType: input.type || 'text',
+          index
+        });
+      }
+    });
+
+    // Find all checkboxes and radio buttons
+    const checks = document.querySelectorAll('input[type="checkbox"], input[type="radio"]');
+    checks.forEach((check, index) => {
+      const label = check.labels?.[0]?.textContent?.trim() ||
+                    check.getAttribute('aria-label') ||
+                    check.name ||
+                    `${check.type} ${index + 1}`;
+
+      if (check.offsetParent !== null || check.labels?.[0]?.offsetParent !== null) {
+        discovered.push({
+          type: check.type,
+          selector: check.id ? `#${check.id}` : `input[type="${check.type}"]:nth-of-type(${index + 1})`,
+          text: label,
+          index
+        });
+      }
+    });
+
+    // Find all select dropdowns
+    const selects = document.querySelectorAll('select');
+    selects.forEach((select, index) => {
+      const label = select.labels?.[0]?.textContent?.trim() ||
+                    select.getAttribute('aria-label') ||
+                    select.name ||
+                    `Dropdown ${index + 1}`;
+
+      if (select.offsetParent !== null) {
+        discovered.push({
+          type: 'select',
+          selector: select.id ? `#${select.id}` : `select:nth-of-type(${index + 1})`,
+          text: label,
+          options: select.options.length,
+          index
+        });
+      }
+    });
+
+    // Find elements with onclick handlers (potential interactive elements)
+    // Note: Only using valid CSS selectors, Vue-specific selectors need different approach
+    try {
+      const clickHandlers = document.querySelectorAll('[onclick], [ng-click]');
+      clickHandlers.forEach((element, index) => {
+        const text = element.textContent?.trim() || element.getAttribute('aria-label') || '';
+
+        if (text && element.offsetParent !== null && text.length < 100) {
+          discovered.push({
+            type: 'clickable',
+            selector: element.id ? `#${element.id}` : `${element.tagName.toLowerCase()}:nth-of-type(${index + 1})`,
+            text,
+            tagName: element.tagName.toLowerCase(),
+            index
+          });
+        }
+      });
+    } catch (e) {
+      // Ignore selector errors
+    }
 
     return discovered;
   }, currentUrl);
@@ -228,7 +307,10 @@ export async function crawlWebsite(config) {
           timeout: 30000
         });
 
-        await page.waitForTimeout(1000); // Wait for dynamic content
+        await page.waitForTimeout(2000); // Wait for dynamic content and React/Vue apps
+
+        // Wait for common app frameworks to load
+        await page.waitForLoadState('domcontentloaded');
 
         // Get page state
         const title = await page.title();
@@ -340,7 +422,7 @@ export function convertPathsToScenarios(graph, projectId, suiteId) {
       });
 
       // Add element interactions
-      path.elements.slice(0, 3).forEach(el => {
+      path.elements.slice(0, 5).forEach(el => {
         if (el.type === 'link') {
           steps.push({
             number: stepNum++,
@@ -351,11 +433,36 @@ export function convertPathsToScenarios(graph, projectId, suiteId) {
             number: stepNum++,
             action: `Verify button "${el.text}" is clickable`
           });
+        } else if (el.type === 'input') {
+          steps.push({
+            number: stepNum++,
+            action: `Verify input field "${el.text}" is editable`
+          });
+        } else if (el.type === 'checkbox') {
+          steps.push({
+            number: stepNum++,
+            action: `Verify checkbox "${el.text}" is interactable`
+          });
+        } else if (el.type === 'radio') {
+          steps.push({
+            number: stepNum++,
+            action: `Verify radio button "${el.text}" is selectable`
+          });
+        } else if (el.type === 'select') {
+          steps.push({
+            number: stepNum++,
+            action: `Verify dropdown "${el.text}" has options`
+          });
+        } else if (el.type === 'clickable') {
+          steps.push({
+            number: stepNum++,
+            action: `Verify element "${el.text}" is clickable`
+          });
         }
       });
 
       scenarios.push({
-        suiteId,
+        suiteId: suiteId ? parseInt(suiteId) : null,
         title: `Otonom Keşif: ${path.title} (Seviye ${depth})`,
         description: `URL: ${path.url}\nOtomatik olarak keşfedildi. ${path.elements.length} etkileşimli element bulundu.`,
         steps,
