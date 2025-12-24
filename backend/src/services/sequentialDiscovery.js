@@ -195,8 +195,40 @@ export async function discoverElementsSequentially(page, scenario, project) {
         await page.waitForLoadState('load', { timeout: 10000 }).catch(() => {});
         await page.waitForTimeout(1500); // Dinamik içerik için ek bekleme
       } else {
-        console.warn(`[AI-SequentialDiscovery] ⚠ Adım çalıştırılamadı ama devam ediliyor: ${executed.message}`);
-        // Bazı adımlar (verify gibi) çalıştırılamayabilir, devam et
+        // Visibility hatası varsa Vision Layer'ı dene
+        if (executed.message.includes('hidden') || executed.message.includes('not visible')) {
+          console.warn(`[AI-SequentialDiscovery] ⚠ Element hidden, Vision Layer deneniyor...`);
+
+          // 🎯 VISION FALLBACK for Visibility Issues
+          try {
+            const screenshot = await page.screenshot();
+            const visionResult = await generateSelectorWithVision(screenshot, actionText);
+            console.log(`[AI-SequentialDiscovery] 🎯 Vision sonucu:`, visionResult);
+
+            if (visionResult.confidence >= 50 && visionResult.coordinates) {
+              // Vision ile koordinat bulundu, tıkla
+              await page.mouse.click(visionResult.coordinates.x, visionResult.coordinates.y);
+              console.log(`[AI-SequentialDiscovery] ✓ Vision ile hidden element tıklandı: (${visionResult.coordinates.x}, ${visionResult.coordinates.y})`);
+
+              // Mapping güncelle (Vision kullanıldığını belirt)
+              mapping.selector = `Vision: (${visionResult.coordinates.x}, ${visionResult.coordinates.y})`;
+              mapping.locatorType = 'vision-coordinates';
+              mapping.confidence = visionResult.confidence;
+              mapping.aiReason += ` → Vision fallback: ${visionResult.description}`;
+
+              // Sayfa yüklemesini bekle
+              await page.waitForLoadState('load', { timeout: 10000 }).catch(() => {});
+              await page.waitForTimeout(1500);
+            } else {
+              console.warn(`[AI-SequentialDiscovery] ⚠ Vision da yeterli confidence vermedi (${visionResult.confidence || 0}%)`);
+            }
+          } catch (visionError) {
+            console.error(`[AI-SequentialDiscovery] Vision hatası:`, visionError.message);
+          }
+        } else {
+          console.warn(`[AI-SequentialDiscovery] ⚠ Adım çalıştırılamadı ama devam ediliyor: ${executed.message}`);
+          // Bazı adımlar (verify gibi) çalıştırılamayabilir, devam et
+        }
       }
 
     } catch (error) {
