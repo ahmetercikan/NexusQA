@@ -4,7 +4,7 @@
  */
 
 import playwrightService from './playwrightService.js';
-import { generatePlaywrightSelector } from './aiSelectorService.js';
+import { generatePlaywrightSelector, generateSelectorWithVision } from './aiSelectorService.js';
 
 /**
  * Senaryoyu adım adım çalıştırarak elementleri keşfet
@@ -77,15 +77,62 @@ export async function discoverElementsSequentially(page, scenario, project) {
         continue;
       }
 
-      // 5. AI element bulamadıysa
+      // 5. AI element bulamadıysa → VISION FALLBACK
       if (!aiDecision || aiDecision.tempId === null || aiDecision.confidence < 30) {
-        results.unmappedSteps.push({
-          stepNumber: step.number,
-          action: step.action,
-          reason: aiDecision?.reason || 'AI düşük confidence verdi'
-        });
-        console.warn(`[AI-SequentialDiscovery] ✗ AI element bulamadı veya confidence düşük (${aiDecision?.confidence || 0})`);
-        break; // Element bulunamadıysa daha ileri gidemeyiz
+        console.warn(`[AI-SequentialDiscovery] ⚠️ Confidence düşük (${aiDecision?.confidence || 0}), Vision Layer aktifleştiriliyor...`);
+
+        // 🎯 LAYER 2: VISION - Ekran görüntüsü ile element bulma
+        try {
+          const screenshot = await page.screenshot();
+          const visionResult = await generateSelectorWithVision(screenshot, actionText);
+          console.log(`[AI-SequentialDiscovery] 🎯 Vision sonucu:`, visionResult);
+
+          // Vision başarılı olduysa koordinatları kullan
+          if (visionResult.confidence >= 50 && visionResult.coordinates) {
+            console.log(`[AI-SequentialDiscovery] ✓ Vision ile element bulundu (confidence: ${visionResult.confidence})`);
+
+            // Koordinatlara göre tıklama yap (Vision Layer özel işlem)
+            await page.mouse.click(visionResult.coordinates.x, visionResult.coordinates.y);
+            console.log(`[AI-SequentialDiscovery] ✓ Vision koordinatlarına tıklandı: (${visionResult.coordinates.x}, ${visionResult.coordinates.y})`);
+
+            // Mapping kaydet (Vision-based)
+            results.mappings.push({
+              stepNumber: step.number,
+              action: step.action,
+              actionType: aiDecision.action || 'click',
+              selector: `Vision: (${visionResult.coordinates.x}, ${visionResult.coordinates.y})`,
+              locatorType: 'vision-coordinates',
+              elementText: visionResult.description || 'Vision-detected element',
+              confidence: visionResult.confidence,
+              aiReason: `Vision Layer - ${visionResult.description}`
+            });
+
+            totalConfidence += visionResult.confidence;
+
+            // Sayfa değişikliğini bekle
+            await page.waitForTimeout(1500);
+            await page.waitForLoadState('domcontentloaded').catch(() => {});
+            continue; // Vision başarılı, sonraki adıma geç
+          } else {
+            // Vision da bulamadı veya düşük confidence
+            results.unmappedSteps.push({
+              stepNumber: step.number,
+              action: step.action,
+              reason: `AI ve Vision düşük confidence (DOM: ${aiDecision?.confidence || 0}%, Vision: ${visionResult.confidence || 0}%)`
+            });
+            console.warn(`[AI-SequentialDiscovery] ✗ Vision da yeterli confidence vermedi (${visionResult.confidence || 0}%)`);
+            break;
+          }
+        } catch (visionError) {
+          console.error(`[AI-SequentialDiscovery] Vision hatası:`, visionError.message);
+          results.unmappedSteps.push({
+            stepNumber: step.number,
+            action: step.action,
+            reason: `AI düşük confidence (${aiDecision?.confidence || 0}%), Vision başarısız: ${visionError.message}`
+          });
+          console.warn(`[AI-SequentialDiscovery] ✗ AI bulamadı, Vision de çalışmadı`);
+          break; // Element bulunamadıysa daha ileri gidemeyiz
+        }
       }
 
       // 5. Geçici AI ID'den kalıcı selector oluştur
