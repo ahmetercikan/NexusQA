@@ -42,6 +42,135 @@ function fixTextLocatorClicks(script) {
 }
 
 /**
+ * Agent'tan gelen script'e proje ayarlarındaki login bloğunu inject et
+ */
+function injectLoginBlock(script, project) {
+  console.log('[injectLoginBlock] Fonksiyon çağrıldı');
+  console.log('[injectLoginBlock] project:', JSON.stringify(project, null, 2));
+
+  if (!script || !project) {
+    console.log('[injectLoginBlock] Script veya project yok, return ediliyor');
+    return script;
+  }
+
+  const { loginUrl, loginUsername, loginPassword, loginSelectors } = project;
+  console.log('[injectLoginBlock] Login bilgileri:', { loginUrl, loginUsername, hasPassword: !!loginPassword });
+
+  // Login bilgileri yoksa script'i olduğu gibi döndür
+  if (!loginUrl || !loginUsername || !loginPassword) {
+    console.log('[injectLoginBlock] Login bilgileri eksik, injection yapılmıyor');
+    return script;
+  }
+
+  // Login bloğunu oluştur
+  const usernameSelector = loginSelectors?.usernameField
+    ? `'${loginSelectors.usernameField}'`
+    : `'input[type="text"], input[type="email"], input[name="username"], input[name="email"]'`;
+
+  const passwordSelector = loginSelectors?.passwordField
+    ? `'${loginSelectors.passwordField}'`
+    : `'input[type="password"]'`;
+
+  const submitSelector = loginSelectors?.submitButton
+    ? `'${loginSelectors.submitButton}'`
+    : `'button[type="submit"], button:has-text("Giriş"), button:has-text("Login")'`;
+
+  const loginBlock = `
+    // 🔐 Otomatik Login (Proje Ayarlarından) - Smart Actions ile
+    await page.goto('${loginUrl}');
+    await page.waitForLoadState('domcontentloaded');
+
+    // Kullanıcı adı gir - Smart fill ile Vision fallback
+    const usernameSelector = ${usernameSelector};
+    await smartFill(page, usernameSelector, '${loginUsername}', { retryWithVision: true });
+
+    // Şifre gir - Smart fill ile Vision fallback
+    const passwordSelector = ${passwordSelector};
+    await smartFill(page, passwordSelector, '${loginPassword}', { retryWithVision: true });
+
+    // Login butonuna tıkla - Smart click ile Vision fallback
+    const submitSelector = ${submitSelector};
+    await smartClick(page, submitSelector, { retryWithVision: true });
+
+    // Login sonrası sayfanın yüklenmesini bekle
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(2000);
+`;
+
+  // Önce smart actions import'unu ekle (eğer yoksa)
+  let scriptWithImports = script;
+  if (!script.includes('smartClick') && !script.includes('smartActions')) {
+    // Import satırını bul ve smart actions ekle
+    const importPattern = /(import\s+\{[^}]+\}\s+from\s+['"]@playwright\/test['"];)/;
+    scriptWithImports = script.replace(importPattern, (_match, importStatement) => {
+      return `${importStatement}\nimport { smartClick, smartFill, smartWaitFor } from '../helpers/smartActions.js';`;
+    });
+    console.log('[injectLoginBlock] ✓ Smart actions import eklendi');
+  }
+
+  // Test fonksiyonunun başına login bloğunu ekle
+  // Pattern: test('...', async ({ page }) => {
+  // [^,]+ ile test adını yakala (virgüle kadar), sonra virgül ve async gelsin
+  const testStartPattern = /(test\([^,]+,\s*async\s*\(\s*\{\s*page\s*\}\s*\)\s*=>\s*\{)/;
+
+  console.log('[injectLoginBlock] Regex pattern ile eşleştirme yapılıyor...');
+  console.log('[injectLoginBlock] Script ilk 300 karakter:', scriptWithImports.substring(0, 300));
+  console.log('[injectLoginBlock] Test pattern aranıyor:', testStartPattern);
+
+  const injectedScript = scriptWithImports.replace(testStartPattern, (_match, testStart) => {
+    console.log('[injectLoginBlock] ✓ Regex match bulundu, login block ekleniyor');
+    console.log('[injectLoginBlock] Matched testStart:', testStart);
+    return testStart + loginBlock;
+  });
+
+  if (injectedScript === scriptWithImports) {
+    console.log('[injectLoginBlock] ⚠ Regex match bulunamadı! Script değişmedi.');
+  } else {
+    console.log('[injectLoginBlock] ✓ Login block başarıyla inject edildi');
+  }
+
+  return injectedScript;
+}
+
+/**
+ * Inject navigation (page.goto) if not already present
+ */
+function injectNavigation(script, baseUrl) {
+  if (!script || !baseUrl) {
+    console.log('[injectNavigation] Script veya baseUrl yok, return ediliyor');
+    return script;
+  }
+
+  // Eğer script'te zaten page.goto varsa, ekleme
+  if (script.includes('page.goto')) {
+    console.log('[injectNavigation] Script zaten page.goto içeriyor, ekleme yapılmıyor');
+    return script;
+  }
+
+  const navigationBlock = `
+  // Navigate to base URL
+  await page.goto('${baseUrl}');
+  await page.waitForLoadState('domcontentloaded');
+`;
+
+  // Test fonksiyonunun başına navigation bloğunu ekle
+  const testStartPattern = /(test\([^,]+,\s*async\s*\(\s*\{\s*page\s*\}\s*\)\s*=>\s*\{)/;
+
+  const injectedScript = script.replace(testStartPattern, (_match, testStart) => {
+    console.log('[injectNavigation] ✓ Navigation block ekleniyor');
+    return testStart + navigationBlock;
+  });
+
+  if (injectedScript === script) {
+    console.log('[injectNavigation] ⚠ Regex match bulunamadı! Script değişmedi.');
+  } else {
+    console.log('[injectNavigation] ✓ Navigation block başarıyla inject edildi');
+  }
+
+  return injectedScript;
+}
+
+/**
  * Create a new scenario (manual or from document)
  * POST /api/scenarios
  */
@@ -366,9 +495,11 @@ export const automateScenario = async (req, res) => {
 
       // Generate script based on automation type
       if (automationType === 'PLAYWRIGHT') {
+        // Project bilgilerini al (tüm scope'ta erişilebilir olması için try dışında tanımla)
+        const project = scenario.suite?.project;
+        const projectBaseUrl = project?.baseUrl || 'http://localhost:3000';
+
         try {
-          // BaseUrl'i project'ten al
-          const projectBaseUrl = scenario.suite?.project?.baseUrl || 'http://localhost:3000';
 
           //  1. ADIM: Sayfayı aç ve elementleri keşfet
           console.log(`[Automate] 1. Element keşfi başlıyor: ${projectBaseUrl}`);
@@ -437,7 +568,14 @@ export const automateScenario = async (req, res) => {
           if (finalResult?.script) {
             // Text locator clicks'i visibility-aware hale getir
             scriptContent = fixTextLocatorClicks(finalResult.script);
-            console.log(`[Automate] Agent tarafından optimize edilmiş script üretildi (${scriptContent.length} karakter, text locators fixed)`);
+            // Proje ayarlarındaki login bilgilerini inject et
+            scriptContent = injectLoginBlock(scriptContent, project);
+            // Navigation ekle (eğer login yoksa ve page.goto yoksa)
+            scriptContent = injectNavigation(scriptContent, projectBaseUrl);
+            // Smart actions'a convert et (runtime self-healing için)
+            const { convertToSmartActions } = await import('../utils/convertToSmartActions.js');
+            scriptContent = convertToSmartActions(scriptContent);
+            console.log(`[Automate] Agent tarafından optimize edilmiş script üretildi (${scriptContent.length} karakter, text locators fixed, login injected, navigation injected, smart actions converted)`);
           } else {
             // Fallback: Manuel script generator'ı kullan
             console.log(`[Automate] Agent script üretemedi, manuel generator kullanılıyor`);
@@ -464,7 +602,7 @@ export const automateScenario = async (req, res) => {
         console.log(`[Automate] Script content hazırlandı, yazdırılıyor...`);
 
         // Script'i dosya sistemine kaydet - PROJE KLASÖRÜ BAZINDA
-        const projectName = scenario.suite?.project?.name || 'default-project';
+        const projectName = project?.name || 'default-project';
         const sanitizedProjectName = projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
         // Helper: Türkçe karakterleri ASCII'ye çevir

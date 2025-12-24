@@ -336,3 +336,49 @@ enum UserRole {
   ADMIN        // Firma yöneticisi - kullanıcı yönetimi, proje oluştur/sil, Agent Management hariç her şey
   USER         // Normal kullanıcı - Agent Management hariç, proje oluştur/sil hariç, kullanıcı yönetimi hariç
 }
+
+// ============================================
+// LAYER 3: MEMORY / RAG SYSTEM
+// ============================================
+
+model ElementMemory {
+  id             Int       @id @default(autoincrement())
+  projectId      Int?      @map("project_id")
+
+  // Kullanıcı action tanımı (natural language input)
+  actionText     String    @db.VarChar(500) // "Kıyaslama tabına tıkla", "Login butonuna tıkla"
+  actionType     String    @db.VarChar(50)  // click, fill, navigate, select, etc.
+
+  // Element bilgileri (başarılı olan element)
+  elementTag     String    @map("element_tag") @db.VarChar(50)
+  elementText    String?   @map("element_text") @db.VarChar(500)
+  elementTestId  String?   @map("element_test_id") @db.VarChar(100)
+  elementId      String?   @map("element_id") @db.VarChar(100)
+  elementName    String?   @map("element_name") @db.VarChar(100)
+  elementAriaLabel String? @map("element_aria_label") @db.VarChar(200)
+
+  // Başarılı selector bilgisi
+  selector       String    @db.VarChar(1000) // Başarılı olan selector
+  locatorType    String    @map("locator_type") @db.VarChar(50) // text, testId, css, xpath, vision-coordinates
+
+  // Context bilgileri
+  urlPattern     String    @map("url_pattern") @db.VarChar(500) // Hangi URL'de bulundu
+  isInModal      Boolean   @default(false) @map("is_in_modal") // Popup/modal içinde mi
+  containerRole  String?   @map("container_role") @db.VarChar(50) // dialog, alert, etc.
+
+  // Başarı metrikleri
+  confidence     Int       @default(0) // AI confidence score (0-100)
+  successCount   Int       @default(1) @map("success_count") // Kaç kez başarıyla kullanıldı
+  lastUsedAt     DateTime  @map("last_used_at") @default(now())
+
+  // Ek metadata
+  metadata       Json?     // {screenshot, domSnapshot, visionUsed, etc.}
+
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([actionText]) // RAG için action text search
+  @@index([projectId, urlPattern]) // Aynı proje + URL pattern için hızlı arama
+  @@index([successCount]) // En başarılı pattern'leri bul
+  @@map("element_memories")
+}

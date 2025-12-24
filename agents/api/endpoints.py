@@ -202,17 +202,11 @@ test('{scenario_title}', async ({{ page }}) => {{
 
         print(f"[ScriptGen] Step {step_num}: {action} | Element found: {elem is not None}")
 
-        # Action'a göre kod üret
-        if "navigate" in action_lower or "go to" in action_lower or "aç" in action_lower or "git" in action_lower or step_num == 1:
-            script += f'''
-  // Step {step_num}: {action}
-  await page.goto('{base_url}');
-  await page.waitForLoadState('domcontentloaded');
-'''
-
-        elif elem:
+        # ÖNCE element mapping kontrol et (Vision coordinates gibi), SONRA action text'e bak
+        if elem:
             selector = elem.get("selector", "")
             action_type = elem.get("actionType", "click")
+            locator_type = elem.get("locatorType", "")  # Vision, text, css, xpath, etc.
 
             if action_type == "fill":
                 # Input için değer çıkar
@@ -226,7 +220,52 @@ test('{scenario_title}', async ({{ page }}) => {{
 '''
 
             elif action_type == "click":
-                script += f'''
+                # locatorType'a göre farklı kod üret
+                if locator_type == "vision-coordinates":
+                    # Vision coordinates parse et: "Vision: (x, y)"
+                    import re
+                    coords_match = re.search(r'Vision: \((\d+), (\d+)\)', selector)
+                    if coords_match:
+                        x = coords_match.group(1)
+                        y = coords_match.group(2)
+                        script += f'''
+  // Step {step_num}: {action}
+  // Using Vision Layer coordinates (element is hidden or hard to locate via DOM)
+  await page.mouse.click({x}, {y});
+  await page.waitForLoadState('domcontentloaded');
+'''
+                    else:
+                        # Parse edilemedi, fallback normal click
+                        script += f'''
+  // Step {step_num}: {action}
+  await page.click('{selector}');
+  await page.waitForLoadState('domcontentloaded');
+'''
+                elif locator_type == "text":
+                    # Text locator için visibility check (hidden elements için hata)
+                    text_value = selector.replace("text=", "")
+                    script += f'''
+  // Step {step_num}: {action}
+  // Click visible text element
+  {{
+    const allMatches = await page.getByText('{text_value}', {{ exact: false }}).all();
+    let visibleElement = null;
+    for (const element of allMatches) {{
+      if (await element.isVisible()) {{
+        visibleElement = element;
+        break;
+      }}
+    }}
+    if (!visibleElement) {{
+      throw new Error('Text "{text_value}" found but all elements are hidden');
+    }}
+    await visibleElement.click();
+  }};
+  await page.waitForLoadState('domcontentloaded');
+'''
+                else:
+                    # Normal selector (css, xpath, testId, etc.)
+                    script += f'''
   // Step {step_num}: {action}
   await page.click('{selector}');
   await page.waitForLoadState('domcontentloaded');
@@ -240,7 +279,14 @@ test('{scenario_title}', async ({{ page }}) => {{
 
         else:
             # Element bulunamadı, action type'a göre genel selector kullan
-            if "tıkla" in action_lower or "click" in action_lower or "bas" in action_lower:
+            # ÖNCE navigate check yap (first step veya navigate keyword'leri)
+            if "navigate" in action_lower or "go to" in action_lower or "aç" in action_lower or "git" in action_lower or step_num == 1:
+                script += f'''
+  // Step {step_num}: {action}
+  await page.goto('{base_url}');
+  await page.waitForLoadState('domcontentloaded');
+'''
+            elif "tıkla" in action_lower or "click" in action_lower or "bas" in action_lower:
                 script += f'''
   // Step {step_num}: {action}
   // TODO: Add specific selector for click action

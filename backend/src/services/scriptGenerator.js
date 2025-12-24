@@ -11,7 +11,7 @@ import fs from 'fs';
  */
 export function generatePlaywrightScript(scenario, project, elementMappings = []) {
   const { title, description, steps, expectedResult, preconditions, testData, targetUrl } = scenario;
-  const { baseUrl, loginUrl, loginUsername } = project;
+  const { baseUrl, loginUrl, loginUsername, loginPassword, loginSelectors } = project;
 
   // Script header
   let script = `/**
@@ -20,9 +20,12 @@ export function generatePlaywrightScript(scenario, project, elementMappings = []
  *
  * Otomatik oluşturulma tarihi: ${new Date().toISOString()}
  * Nexus QA Platform
+ *
+ * 🔧 Runtime Self-Healing: This test uses smart actions with Vision fallback
  */
 
 import { test, expect } from '@playwright/test';
+import { smartClick, smartFill, smartWaitFor } from '../../helpers/smartActions.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -50,6 +53,31 @@ if (!fs.existsSync(screenshotDir)) {
     script += `
     // Test Verileri
     const testData = ${JSON.stringify(testData, null, 4).split('\n').join('\n    ')};
+`;
+  }
+
+  // Login bilgileri varsa, test başında login yap (Smart actions ile)
+  if (loginUrl && loginUsername && loginPassword) {
+    script += `
+    // 🔐 Otomatik Login (Proje Ayarlarından) - Smart Actions ile
+    await page.goto('${loginUrl}');
+    await page.waitForLoadState('domcontentloaded');
+
+    // Kullanıcı adı gir - Smart fill ile Vision fallback
+    const usernameSelector = ${loginSelectors?.usernameField ? `'${loginSelectors.usernameField}'` : `'input[type="text"], input[type="email"], input[name="username"], input[name="email"]'`};
+    await smartFill(page, usernameSelector, '${loginUsername}', { retryWithVision: true });
+
+    // Şifre gir - Smart fill ile Vision fallback
+    const passwordSelector = ${loginSelectors?.passwordField ? `'${loginSelectors.passwordField}'` : `'input[type="password"]'`};
+    await smartFill(page, passwordSelector, '${loginPassword}', { retryWithVision: true });
+
+    // Login butonuna tıkla - Smart click ile Vision fallback
+    const submitSelector = ${loginSelectors?.submitButton ? `'${loginSelectors.submitButton}'` : `'button[type="submit"], button:has-text("Giriş"), button:has-text("Login")'`};
+    await smartClick(page, submitSelector, { retryWithVision: true });
+
+    // Login sonrası sayfanın yüklenmesini bekle
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(2000);
 `;
   }
 
@@ -184,34 +212,12 @@ function generateNavigationCode(actionText, selector, projectBaseUrl = null) {
     }
   }
 
-  // Selector varsa tıklama ile navigasyon
+  // Selector varsa tıklama ile navigasyon (Smart click ile)
   if (selector) {
-    // Text-based selector - sadece görünür olanı tıkla
-    if (selector.startsWith('text=')) {
-      const textValue = selector.replace('text=', '');
-      return `    // Navigate via visible text element
-    {
-      const allMatches = await page.getByText('${escapeString(textValue)}', { exact: false }).all();
-      let visibleElement = null;
-      for (const element of allMatches) {
-        if (await element.isVisible()) {
-          visibleElement = element;
-          break;
-        }
-      }
-      if (!visibleElement) {
-        throw new Error('Text "${escapeString(textValue)}" found but all elements are hidden');
-      }
-      await visibleElement.click();
-    }
+    return `    // Navigate via smart click with Vision fallback
+    await smartClick(page, '${escapeSelector(selector)}', { retryWithVision: true });
     await page.waitForLoadState('networkidle');
 `;
-    } else {
-      // CSS selector - normal click
-      return `    await page.click('${escapeSelector(selector)}');
-    await page.waitForLoadState('networkidle');
-`;
-    }
   }
 
   return `    // TODO: Navigasyon URL'i belirle
@@ -220,50 +226,31 @@ function generateNavigationCode(actionText, selector, projectBaseUrl = null) {
 }
 
 /**
- * Tıklama kodu üret
+ * Tıklama kodu üret - SmartClick ile Vision fallback
  */
 function generateClickCode(actionText, selector, mapping) {
   if (selector) {
-    // Text-based selector - sadece görünür olanı tıkla
-    if (selector.startsWith('text=')) {
-      const textValue = selector.replace('text=', '');
-      return `    // Click visible text element
-    {
-      const allMatches = await page.getByText('${escapeString(textValue)}', { exact: false }).all();
-      let visibleElement = null;
-      for (const element of allMatches) {
-        if (await element.isVisible()) {
-          visibleElement = element;
-          break;
-        }
-      }
-      if (!visibleElement) {
-        throw new Error('Text "${escapeString(textValue)}" found but all elements are hidden');
-      }
-      await visibleElement.click();
-    }
+    // Smart click with Vision fallback - works with any selector type
+    return `    // Smart click with Vision fallback
+    await smartClick(page, '${escapeSelector(selector)}', { retryWithVision: true });
 `;
-    } else {
-      // CSS selector - normal click
-      return `    await page.click('${escapeSelector(selector)}');
-`;
-    }
   }
 
   // Selector yoksa text'e göre bulmaya çalış
   const buttonText = extractButtonText(actionText);
   if (buttonText) {
-    return `    await page.getByRole('button', { name: '${escapeString(buttonText)}' }).click();
+    return `    // Smart click by button text with Vision fallback
+    await smartClick(page, 'text=${escapeString(buttonText)}', { retryWithVision: true });
 `;
   }
 
   return `    // TODO: Element selector belirle
-    // await page.click('selector');
+    // await smartClick(page, 'selector', { retryWithVision: true });
 `;
 }
 
 /**
- * Form doldurma kodu üret
+ * Form doldurma kodu üret - SmartFill ile
  */
 function generateFillCode(actionText, selector, mapping, testData) {
   // Test data'dan değer bulmaya çalış
@@ -278,24 +265,26 @@ function generateFillCode(actionText, selector, mapping, testData) {
   }
 
   if (selector) {
-    return `    await page.fill('${escapeSelector(selector)}', '${escapeString(value)}');
+    return `    // Smart fill with fallback
+    await smartFill(page, '${escapeSelector(selector)}', '${escapeString(value)}', { retryWithVision: true });
 `;
   }
 
   // Selector yoksa label/placeholder ile bul
   const fieldLabel = extractFieldLabel(actionText);
   if (fieldLabel) {
-    return `    await page.getByLabel('${escapeString(fieldLabel)}').fill('${escapeString(value)}');
+    return `    // Smart fill by label
+    await smartFill(page, 'label:has-text("${escapeString(fieldLabel)}") >> input', '${escapeString(value)}', { retryWithVision: true });
 `;
   }
 
   // Input type'a göre bul
   if (fieldType === 'email') {
-    return `    await page.fill('input[type="email"]', '${escapeString(value)}');
+    return `    await smartFill(page, 'input[type="email"]', '${escapeString(value)}', { retryWithVision: true });
 `;
   }
   if (fieldType === 'password') {
-    return `    await page.fill('input[type="password"]', '${escapeString(value)}');
+    return `    await smartFill(page, 'input[type="password"]', '${escapeString(value)}', { retryWithVision: true });
 `;
   }
 
@@ -661,7 +650,7 @@ export function generateScriptFromManualScenario(scenario, project = {}) {
   // testData null veya undefined olabilir, her zaman object olduğundan emin ol
   const testData = rawTestData || {};
 
-  const { baseUrl = 'http://localhost:3000', elementMappings = [] } = project;
+  const { baseUrl = 'http://localhost:3000', loginUrl, loginUsername, loginPassword, loginSelectors, elementMappings = [] } = project;
 
   // DEBUG logging
   console.log(`[scriptGenerator] generateScriptFromManualScenario başladı:`);
@@ -679,9 +668,12 @@ export function generateScriptFromManualScenario(scenario, project = {}) {
  *
  * Otomatik oluşturulma tarihi: ${new Date().toISOString()}
  * Nexus QA Platform - Manuel Test Case'den Üretildi
+ *
+ * 🔧 Runtime Self-Healing: This test uses smart actions with Vision fallback
  */
 
 import { test, expect } from '@playwright/test';
+import { smartClick, smartFill, smartWaitFor } from '../../helpers/smartActions.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -706,6 +698,31 @@ test.describe('${escapeString(title)}', () => {
     script += `
     // Test Verileri
     const testData = ${JSON.stringify(testData, null, 4).split('\n').join('\n    ')};
+`;
+  }
+
+  // Login bilgileri varsa önce login yap (Smart actions ile)
+  if (loginUrl && loginUsername && loginPassword) {
+    script += `
+    // 🔐 Otomatik Login (Proje Ayarlarından) - Smart Actions ile
+    await page.goto('${loginUrl}');
+    await page.waitForLoadState('domcontentloaded');
+
+    // Kullanıcı adı gir - Smart fill ile Vision fallback
+    const usernameSelector = ${loginSelectors?.usernameField ? `'${loginSelectors.usernameField}'` : `'input[type="text"], input[type="email"], input[name="username"], input[name="email"]'`};
+    await smartFill(page, usernameSelector, '${loginUsername}', { retryWithVision: true });
+
+    // Şifre gir - Smart fill ile Vision fallback
+    const passwordSelector = ${loginSelectors?.passwordField ? `'${loginSelectors.passwordField}'` : `'input[type="password"]'`};
+    await smartFill(page, passwordSelector, '${loginPassword}', { retryWithVision: true });
+
+    // Login butonuna tıkla - Smart click ile Vision fallback
+    const submitSelector = ${loginSelectors?.submitButton ? `'${loginSelectors.submitButton}'` : `'button[type="submit"], button:has-text("Giriş"), button:has-text("Login")'`};
+    await smartClick(page, submitSelector, { retryWithVision: true });
+
+    // Login sonrası sayfanın yüklenmesini bekle
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(2000);
 `;
   }
 
@@ -1048,7 +1065,7 @@ export function generateScreenBasedScript(scenarios, project = {}) {
     throw new Error('En az bir senaryo gerekli');
   }
 
-  const { projectName = 'default', baseUrl = 'http://localhost:3000', elementMappings = [] } = project;
+  const { projectName = 'default', baseUrl = 'http://localhost:3000', loginUrl, loginUsername, loginPassword, loginSelectors, elementMappings = [] } = project;
   const screen = scenarios[0]?.screen || 'general';
 
   console.log(`[scriptGenerator] generateScreenBasedScript başladı:`);
@@ -1064,9 +1081,12 @@ export function generateScreenBasedScript(scenarios, project = {}) {
  *
  * Otomatik oluşturulma tarihi: ${new Date().toISOString()}
  * Nexus QA Platform
+ *
+ * 🔧 Runtime Self-Healing: This test uses smart actions with Vision fallback
  */
 
 import { test, expect } from '@playwright/test';
+import { smartClick, smartFill, smartWaitFor } from '../../helpers/smartActions.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -1118,6 +1138,31 @@ test.describe('${escapeString(screen)} Tests', () => {
       script += `
     // Test Verileri
     const testData = ${JSON.stringify(testData, null, 4).split('\n').join('\n    ')};
+`;
+    }
+
+    // Login bilgileri varsa önce login yap (Smart actions ile)
+    if (loginUrl && loginUsername && loginPassword) {
+      script += `
+    // 🔐 Otomatik Login (Proje Ayarlarından) - Smart Actions ile
+    await page.goto('${loginUrl}');
+    await page.waitForLoadState('domcontentloaded');
+
+    // Kullanıcı adı gir - Smart fill ile Vision fallback
+    const usernameSelector = ${loginSelectors?.usernameField ? `'${loginSelectors.usernameField}'` : `'input[type="text"], input[type="email"], input[name="username"], input[name="email"]'`};
+    await smartFill(page, usernameSelector, '${loginUsername}', { retryWithVision: true });
+
+    // Şifre gir - Smart fill ile Vision fallback
+    const passwordSelector = ${loginSelectors?.passwordField ? `'${loginSelectors.passwordField}'` : `'input[type="password"]'`};
+    await smartFill(page, passwordSelector, '${loginPassword}', { retryWithVision: true });
+
+    // Login butonuna tıkla - Smart click ile Vision fallback
+    const submitSelector = ${loginSelectors?.submitButton ? `'${loginSelectors.submitButton}'` : `'button[type="submit"], button:has-text("Giriş"), button:has-text("Login")'`};
+    await smartClick(page, submitSelector, { retryWithVision: true });
+
+    // Login sonrası sayfanın yüklenmesini bekle
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(2000);
 `;
     }
 
