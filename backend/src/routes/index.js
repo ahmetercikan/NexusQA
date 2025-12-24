@@ -7,6 +7,8 @@ import testRoutes from './testRoutes.js';
 import documentRoutes from './documentRoutes.js';
 import scenarioRoutes from './scenarioRoutes.js';
 import automationRoutes from './automationRoutes.js';
+import visionRoutes from './visionRoutes.js';
+import memoryRoutes from './memoryRoutes.js';
 
 const router = Router();
 
@@ -25,6 +27,8 @@ router.get('/', (req, res) => {
       documents: '/api/documents',
       scenarios: '/api/scenarios',
       automation: '/api/automation',
+      vision: '/api/vision',
+      memory: '/api/memory',
       dashboard: '/api/tests/dashboard',
       health: '/health'
     }
@@ -40,5 +44,7 @@ router.use('/tests', testRoutes);
 router.use('/documents', documentRoutes);
 router.use('/scenarios', scenarioRoutes);
 router.use('/automation', automationRoutes);
+router.use('/vision', visionRoutes);
+router.use('/memory', memoryRoutes);
 
 export default router;
