@@ -37,7 +37,7 @@ app.add_middleware(
 
 # Router
 from fastapi import APIRouter
-router = APIRouter(prefix="")  # No prefix - endpoints are directly at /crew/*, /tasks/*
+router = APIRouter()  # No prefix - endpoints directly under root
 
 # ============================================================
 # PYDANTIC MODELS
@@ -621,27 +621,23 @@ Document content:
 Instructions:
 - CRITICAL: Read the ENTIRE document from beginning to end before generating scenarios
 - Do NOT skip any sections, chapters, or requirements
-- The document may be in Turkish or English
+- **LANGUAGE RULE: Generate ALL content (title, description, steps, expectedResult) in the SAME LANGUAGE as the document**
+  * If document is in Turkish → ALL fields must be in Turkish
+  * If document is in English → ALL fields must be in English
 - Generate scenarios based on document complexity and ALL requirements found:
   * Simple single-sentence requirements → 1-2 scenarios
   * Medium documents with multiple features → 3-7 scenarios
   * Complex PRD documents → 8-15+ scenarios
 - IMPORTANT: Extract scenarios from ALL sections of the document, not just the beginning
 - Each scenario should have:
-  * title: Brief descriptive title (in Turkish if document is Turkish)
-  * description: What the test does (in Turkish if document is Turkish)
+  * title: Brief descriptive title
+  * description: What the test does
   * steps: Array of steps with number and action (use clear, specific action verbs)
-  * expectedResult: What should happen (in Turkish if document is Turkish)
+  * expectedResult: What should happen
   * priority: HIGH, MEDIUM, or LOW
   * automationType: UI, API, or INTEGRATION
 
-IMPORTANT ACTION KEYWORDS:
-- Turkish "ara" / "arama" = English "search" → Use "Search for [term]" or "Type '[term]' into search box"
-- Turkish "tıkla" = English "click" → Use "Click [element]"
-- Turkish "yaz" / "gir" = English "type/fill" → Use "Type '[text]' into [field]"
-- Turkish "aç" / "git" = English "open/navigate" → Use "Navigate to [page]"
-
-Example (Turkish):
+Example (Turkish document → Turkish output):
 {{
   "scenarios": [
     {{
@@ -778,46 +774,65 @@ Requirement text:
 
 Instructions:
 - CRITICAL: Read the ENTIRE text carefully before generating scenarios
+- **CAPTURE ALL STEPS**: Each line or action mentioned in the input must become a separate step
+- **NEVER SKIP POST-ACTION STEPS**: If text says "after login, do X", X must be included as steps
 - Adjust scenario count based on requirement complexity:
   * Single simple action → 1 scenario
   * Multiple related actions → 2-4 scenarios
   * Complex multi-feature requirements → 5-10+ scenarios
 - IMPORTANT: Don't create unnecessary scenarios - match the actual requirements
-- The text may be in Turkish or English
+- **LANGUAGE RULE: Generate ALL content (title, description, steps, expectedResult) in the SAME LANGUAGE as the input text**
+  * If input is in Turkish → ALL fields must be in Turkish
+  * If input is in English → ALL fields must be in English
 - Each scenario should have:
-  * title: Brief descriptive title (in Turkish if text is Turkish)
-  * description: What the test does (in Turkish if text is Turkish)
+  * title: Brief descriptive title covering ALL actions (not just the first action)
+  * description: What the test does (include all major steps)
   * steps: Array of steps with number and action (use clear, specific action verbs)
-  * expectedResult: What should happen (in Turkish if text is Turkish)
+  * expectedResult: What should happen at the END of all steps
   * priority: HIGH, MEDIUM, or LOW
   * automationType: UI, API, or INTEGRATION
 
-IMPORTANT ACTION KEYWORDS:
-- Turkish "ara" / "arama" = English "search" → Use "Search for [term]" or "Type '[term]' into search box"
-- Turkish "tıkla" = English "click" → Use "Click [element]"
-- Turkish "yaz" / "gir" = English "type/fill" → Use "Type '[text]' into [field]"
-- Turkish "aç" / "git" = English "open/navigate" → Use "Navigate to [page]"
-
-Example (Turkish):
+Example 1 (Turkish - Simple):
 Input: "ana sayfada inception filmini ara ve tıkla"
 Output:
 [
   {{
-    "title": "Search and View Inception Movie",
-    "description": "Search for Inception movie and view its details",
+    "title": "Inception Filmini Ara ve Görüntüle",
+    "description": "Inception filmini arayıp detaylarını görüntüle",
     "steps": [
-      {{"number": 1, "action": "Navigate to homepage"}},
-      {{"number": 2, "action": "Type 'inception' into search box"}},
-      {{"number": 3, "action": "Click search button or press Enter"}},
-      {{"number": 4, "action": "Click on Inception movie from results"}}
+      {{"number": 1, "action": "Ana sayfaya git"}},
+      {{"number": 2, "action": "Arama kutusuna 'inception' yaz"}},
+      {{"number": 3, "action": "Ara butonuna tıkla veya Enter'a bas"}},
+      {{"number": 4, "action": "Sonuçlardan Inception filmine tıkla"}}
     ],
-    "expectedResult": "Inception movie details page is displayed",
+    "expectedResult": "Inception film detay sayfası görüntülenir",
     "priority": "HIGH",
     "automationType": "UI"
   }}
 ]
 
-Example (English):
+Example 2 (Turkish - Multi-step with login + post-login):
+Input: "login sayfasına git, email olarak test@test.com yaz, şifre olarak 123456 yaz ve login ol, login olduktan sonra Ayarlar sayfasına git ve Profil Düzenle butonuna tıkla"
+Output:
+[
+  {{
+    "title": "Giriş Yap ve Profil Düzenle",
+    "description": "Kullanıcı giriş yapıp profil düzenleme ekranına gider",
+    "steps": [
+      {{"number": 1, "action": "Login sayfasına git"}},
+      {{"number": 2, "action": "Email alanına 'test@test.com' yaz"}},
+      {{"number": 3, "action": "Şifre alanına '123456' yaz"}},
+      {{"number": 4, "action": "Login butonuna tıkla"}},
+      {{"number": 5, "action": "Ayarlar sayfasına git"}},
+      {{"number": 6, "action": "Profil Düzenle butonuna tıkla"}}
+    ],
+    "expectedResult": "Profil düzenleme ekranı açılır",
+    "priority": "HIGH",
+    "automationType": "UI"
+  }}
+]
+
+Example 3 (English - Simple):
 Input: "search for Lord of the Rings and click it"
 Output:
 [
@@ -838,8 +853,10 @@ Output:
 
 CRITICAL RULES:
 - For simple single-sentence requirements, return only ONE scenario
-- Break down complex actions into specific steps (navigate → search → click result)
-- Be very specific about what to type, where to click
+- **INCLUDE ALL STEPS FROM INPUT**: If input mentions 5 actions, output must have 5+ steps
+- **NEVER STOP AT LOGIN**: If input has "after login, do X", you MUST include X as steps
+- Break down complex actions into specific steps (navigate → fill fields → click → navigate again)
+- Be very specific about what to type, where to click, which values to use
 - NEVER use vague actions like "Locate" - use "Search for" or "Type into"
 - Return ONLY the JSON array, no markdown, no additional text"""
 

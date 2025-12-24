@@ -8,6 +8,7 @@ import {
   parseDocumentContent,
   analyzeDocumentContent,
   generateScenariosFromText,
+  startAutonomousCrawl,
 } from '../controllers/documentController.js';
 
 const router = express.Router();
@@ -18,6 +19,13 @@ const router = express.Router();
  * Body: { content, projectId, suiteId }
  */
 router.post('/generate-from-text', generateScenariosFromText);
+
+/**
+ * POST /api/documents/autonomous-crawl
+ * Start autonomous URL crawling to discover test scenarios
+ * Body: { url, projectId, suiteId, depth, maxPages, strategy, options }
+ */
+router.post('/autonomous-crawl', startAutonomousCrawl);
 
 /**
  * POST /api/documents/upload

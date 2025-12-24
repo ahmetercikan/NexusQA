@@ -694,3 +694,83 @@ async function generateScenariosFromTextAsync(documentId, content, projectId, su
     throw error; // Re-throw so caller can handle it
   }
 }
+
+/**
+ * POST /documents/autonomous-crawl
+ * Start autonomous URL crawling to discover test scenarios
+ */
+export const startAutonomousCrawl = async (req, res) => {
+  try {
+    const { url, projectId, suiteId, depth = 3, maxPages = 50, strategy = 'BFS', options = {} } = req.body;
+
+    if (!url || !projectId) {
+      return res.status(400).json({
+        success: false,
+        error: 'URL and projectId are required'
+      });
+    }
+
+    console.log(`[AutonomousCrawl] Starting crawl for ${url}`);
+    console.log(`[AutonomousCrawl] Strategy: ${strategy}, Depth: ${depth}, Max Pages: ${maxPages}`);
+    console.log(`[AutonomousCrawl] Options:`, options);
+
+    // Import crawler dynamically to avoid loading Playwright on startup
+    const { crawlWebsite, convertPathsToScenarios } = await import('../services/autonomousCrawler.js');
+
+    // Start crawling
+    const crawlResult = await crawlWebsite({
+      url,
+      depth,
+      maxPages,
+      strategy,
+      options: {
+        ignoreLogout: options.ignoreLogout !== false, // Default true
+        ignoreDelete: options.ignoreDelete !== false, // Default true
+        autoFillForms: options.autoFillForms !== false, // Default true
+      }
+    });
+
+    if (!crawlResult.success) {
+      throw new Error('Crawl failed');
+    }
+
+    console.log(`[AutonomousCrawl] Crawl stats:`, crawlResult.stats);
+
+    // Convert discovered paths to test scenarios
+    const scenarios = convertPathsToScenarios(crawlResult.graph, projectId, suiteId);
+
+    console.log(`[AutonomousCrawl] Generated ${scenarios.length} scenarios from ${crawlResult.graph.length} paths`);
+
+    // Save scenarios to database
+    let createdCount = 0;
+
+    for (const scenarioData of scenarios) {
+      try {
+        await prisma.scenario.create({
+          data: scenarioData
+        });
+        createdCount++;
+      } catch (createError) {
+        console.error(`[AutonomousCrawl] Failed to save scenario "${scenarioData.title}":`, createError.message);
+      }
+    }
+
+    console.log(`[AutonomousCrawl] ✅ Successfully saved ${createdCount}/${scenarios.length} scenarios`);
+
+    res.json({
+      success: true,
+      message: `Otonom keşif tamamlandı: ${createdCount} senaryo oluşturuldu`,
+      url,
+      projectId,
+      suiteId,
+      stats: crawlResult.stats,
+      scenarioCount: createdCount,
+    });
+  } catch (error) {
+    console.error('[AutonomousCrawl] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Autonomous crawl failed'
+    });
+  }
+};

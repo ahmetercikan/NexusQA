@@ -602,6 +602,11 @@ export async function getSimplifiedDOM(page) {
         const elementType = el.type || '';
         const ariaLabel = el.getAttribute('aria-label') || '';
 
+        // Modal/popup context bilgisi (AI'ın popup içi/dışı ayrımı yapabilmesi için)
+        const modalParent = el.closest('[role="dialog"], [aria-modal="true"], .modal, .popup, .modal-content, [class*="modal"], [class*="popup"], [class*="dialog"]');
+        const isInModal = !!modalParent;
+        const containerRole = el.closest('[role]')?.getAttribute('role') || null;
+
         // rect ve isInViewport zaten yukarıda tanımlandı, yeniden kullan
         domMap.push({
           id: validIndex,
@@ -613,6 +618,8 @@ export async function getSimplifiedDOM(page) {
           name: elementName,
           ariaLabel: ariaLabel,
           isInViewport: true, // Zaten viewport kontrolünden geçti
+          isInModal: isInModal, // Popup/modal içinde mi?
+          containerRole: containerRole, // Parent container'ın role'ü (dialog, alert, etc)
           position: {
             x: Math.round(rect.x),
             y: Math.round(rect.y)

@@ -37,7 +37,7 @@ export async function discoverElementsSequentially(page, scenario, project) {
   // Her adımı sırayla çalıştır
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
-    const actionText = typeof step.action === 'string' ? step.action : (step.action?.description || '');
+    const actionText = step.action || step.description || '';
 
     console.log(`\n[AI-SequentialDiscovery] === Adım ${step.number}: ${actionText} ===`);
 
@@ -70,7 +70,14 @@ export async function discoverElementsSequentially(page, scenario, project) {
         break; // AI çalışmıyorsa devam edemeyiz
       }
 
-      // 4. AI element bulamadıysa
+      // 4. Navigation action kontrolü
+      if (aiDecision && aiDecision.action === 'navigate') {
+        console.log(`[AI-SequentialDiscovery] ⏩ Navigation action, element gerekmiyor - sonraki adıma geçiliyor`);
+        // Navigation action'ları için element keşfi gerekmez, devam et
+        continue;
+      }
+
+      // 5. AI element bulamadıysa
       if (!aiDecision || aiDecision.tempId === null || aiDecision.confidence < 30) {
         results.unmappedSteps.push({
           stepNumber: step.number,

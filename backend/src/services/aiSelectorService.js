@@ -45,8 +45,12 @@ I will provide:
 
 Your task:
 Find the BEST matching element for the given user action. Consider:
-- Exact text matches are preferred
-- Semantic meaning (e.g., "login" matches "sign in")
+- Exact text matches are preferred (highest priority)
+- **POPUP/MODAL CONTEXT**:
+  * If user action mentions "popup", "modal", "dialog", "açılan popup/modal", ONLY consider elements where isInModal=true
+  * Ignore elements with isInModal=false when user explicitly mentions popup/modal context
+  * If no popup context in action, prioritize elements with isInModal=false (main page content)
+- Semantic meaning (e.g., "login" matches "sign in", but be careful - "kıyaslama" and "karşılaştırma" are similar but may refer to different elements)
 - Element type must match action (buttons for clicks, inputs for typing)
 - Visibility and position on page
 
@@ -66,6 +70,9 @@ Return a JSON object with this exact structure:
 }
 
 IMPORTANT:
+- **PAGE NAVIGATION**: If the action is about navigating to a different PAGE or URL (e.g., "go to login page", "navigate to homepage", "Ana sayfaya git"), return:
+  { "tempId": null, "action": "navigate", "confidence": 100, "reason": "Navigation action, no element needed" }
+- **TAB/SECTION SWITCHING**: If action mentions switching TABS or SECTIONS within the same page (e.g., "go to Profile tab", "Kıyaslama tabına git", "switch to Settings tab"), this is a CLICK action. Find and click the tab element.
 - Return ONLY valid JSON, no markdown or explanation
 - If no good match found, return { "tempId": null, "confidence": 0, "reason": "No matching element found" }
 - For fill actions, extract the value from the user step (e.g., "Type '150000'" → value: "150000")`;
