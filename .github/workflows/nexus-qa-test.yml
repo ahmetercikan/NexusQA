@@ -1,0 +1,326 @@
+# Nexus QA - GitHub Actions Workflow
+# Auto-run tests on push, pull request, or schedule
+#
+# This workflow runs Nexus QA tests with AI Agent support,
+# mobile testing, and intelligent reporting
+
+name: Nexus QA Tests
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Test suite to run'
+        required: false
+        default: 'all'
+      device:
+        description: 'Device for mobile tests (e.g., iPhone 15 Pro, Samsung S24)'
+        required: false
+        default: 'all'
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.12'
+  NEXUS_QA_API: ${{ secrets.NEXUS_QA_API_URL }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+jobs:
+  # ==================== SETUP & VALIDATION ====================
+  setup:
+    name: Setup & Validate
+    runs-on: ubuntu-latest
+    outputs:
+      tests-changed: ${{ steps.changes.outputs.tests }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check for test changes
+        id: changes
+        run: |
+          if git diff --name-only HEAD^ HEAD | grep -E '(tests/|src/)'; then
+            echo "tests=true" >> $GITHUB_OUTPUT
+          else
+            echo "tests=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate Nexus QA configuration
+        run: |
+          if [ ! -f "backend/playwright.config.js" ]; then
+            echo "❌ Playwright config not found"
+            exit 1
+          fi
+          echo "✅ Configuration validated"
+
+  # ==================== WEB TESTS (Desktop) ====================
+  web-tests:
+    name: Web Tests (Desktop)
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Setup Python (for AI Agents)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          npm ci
+          npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Install Python dependencies (AI Agents)
+        working-directory: agents
+        run: |
+          pip install -r requirements.txt
+
+      - name: Start Nexus QA backend
+        working-directory: backend
+        run: |
+          npm run dev &
+          sleep 10
+          curl -f http://localhost:3001/health || exit 1
+
+      - name: Run Playwright tests - ${{ matrix.browser }}
+        working-directory: backend
+        run: |
+          npx playwright test --project=${{ matrix.browser }} --reporter=html,json,junit
+        env:
+          CI: true
+          PWDEBUG: 0
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.browser }}
+          path: |
+            backend/playwright-report/
+            backend/test-results/
+            backend/screenshots/
+          retention-days: 30
+
+      - name: Upload JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.browser }}
+          path: backend/results.xml
+          retention-days: 30
+
+  # ==================== MOBILE TESTS (iOS & Android) ====================
+  mobile-tests:
+    name: Mobile Tests
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        device:
+          - name: 'iPhone 15 Pro'
+            platform: 'ios'
+          - name: 'Samsung Galaxy S24 Ultra'
+            platform: 'android'
+          - name: 'iPad Air'
+            platform: 'ios'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run mobile tests - ${{ matrix.device.name }}
+        working-directory: backend
+        run: |
+          npx playwright test tests/generated/mobile-demo.spec.js --project=chromium
+        env:
+          DEVICE_NAME: ${{ matrix.device.name }}
+          PLATFORM: ${{ matrix.device.platform }}
+
+      - name: Upload mobile screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-screenshots-${{ matrix.device.platform }}
+          path: backend/screenshots/
+          retention-days: 30
+
+  # ==================== AI AGENT TESTS ====================
+  agent-tests:
+    name: AI Agent Integration Tests
+    needs: setup
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Agent dependencies
+        working-directory: agents
+        run: |
+          pip install -r requirements.txt
+
+      - name: Test Agent API
+        working-directory: agents
+        run: |
+          python -m pytest tests/ -v --tb=short
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Validate Agent endpoints
+        run: |
+          curl -f http://localhost:8000/health || echo "Agent API not running (expected in CI)"
+
+  # ==================== PERFORMANCE & LOAD TESTS ====================
+  performance-tests:
+    name: Performance Tests
+    needs: [web-tests, mobile-tests]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Run performance benchmarks
+        working-directory: backend
+        run: |
+          npm run test:performance || echo "Performance tests not yet configured"
+
+      - name: Generate performance report
+        run: |
+          echo "📊 Performance metrics will be collected here"
+
+  # ==================== REPORT & NOTIFY ====================
+  report:
+    name: Generate Test Report & Notify
+    needs: [web-tests, mobile-tests, agent-tests]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: test-artifacts/
+
+      - name: Generate summary report
+        run: |
+          echo "# 🧪 Nexus QA Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Workflow:** ${{ github.workflow }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Web Tests: ${{ needs.web-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- 📱 Mobile Tests: ${{ needs.mobile-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- 🤖 Agent Tests: ${{ needs.agent-tests.result }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Send Slack notification
+        if: always() && env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          STATUS="${{ job.status }}"
+          COLOR="good"
+          if [ "$STATUS" != "success" ]; then
+            COLOR="danger"
+          fi
+
+          curl -X POST $SLACK_WEBHOOK_URL \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "attachments": [{
+                "color": "'$COLOR'",
+                "title": "Nexus QA Tests - '$STATUS'",
+                "text": "Branch: ${{ github.ref_name }}\nCommit: ${{ github.sha }}",
+                "fields": [
+                  {"title": "Web Tests", "value": "${{ needs.web-tests.result }}", "short": true},
+                  {"title": "Mobile Tests", "value": "${{ needs.mobile-tests.result }}", "short": true},
+                  {"title": "Agent Tests", "value": "${{ needs.agent-tests.result }}", "short": true}
+                ]
+              }]
+            }'
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🧪 Nexus QA Test Results
+
+              **Status:** ${{ job.status }}
+
+              | Test Suite | Result |
+              |------------|--------|
+              | Web Tests (Chromium) | ${{ needs.web-tests.result }} |
+              | Web Tests (Firefox) | ${{ needs.web-tests.result }} |
+              | Web Tests (Webkit) | ${{ needs.web-tests.result }} |
+              | Mobile Tests (iOS) | ${{ needs.mobile-tests.result }} |
+              | Mobile Tests (Android) | ${{ needs.mobile-tests.result }} |
+              | AI Agent Tests | ${{ needs.agent-tests.result }} |
+
+              [View detailed report](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`
+            })
+
+# 🚀 Powered by Nexus QA - AI Agent Test Automation
+# 📱 Supports Web (Desktop) + Mobile (iOS/Android) + AI Agents

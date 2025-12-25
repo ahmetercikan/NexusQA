@@ -429,3 +429,133 @@ model MobileTestConfig {
   @@index([platform])
   @@map("mobile_test_configs")
 }
+
+// ============================================
+// CLOUD EXECUTION & DISTRIBUTED TESTING
+// ============================================
+
+model CloudExecution {
+  id             Int       @id @default(autoincrement())
+  projectId      Int       @map("project_id")
+  testRunId      Int?      @map("test_run_id")
+
+  // Cloud provider configuration
+  provider       String    @db.VarChar(50) // browserstack, saucelabs, lambdatest, local
+  cloudJobId     String?   @map("cloud_job_id") @db.VarChar(255) // Provider's job ID
+
+  // Execution details
+  status         String    @default("queued") @db.VarChar(50) // queued, running, completed, failed, cancelled
+  priority       Int       @default(0)
+
+  // Resource allocation
+  parallelSessions Int     @default(1) @map("parallel_sessions")
+  browserType    String    @db.VarChar(50) // chromium, firefox, webkit
+  deviceType     String?   @db.VarChar(100) // Desktop, Mobile, Tablet, or specific device
+
+  // Timing
+  enqueuedAt     DateTime  @default(now()) @map("enqueued_at")
+  startedAt      DateTime? @map("started_at")
+  completedAt    DateTime? @map("completed_at")
+  durationSeconds Int?     @map("duration_seconds")
+
+  // Results
+  testsTotal     Int?      @map("tests_total")
+  testsPassed    Int?      @map("tests_passed")
+  testsFailed    Int?      @map("tests_failed")
+  testsSkipped   Int?      @map("tests_skipped")
+
+  // Cost tracking
+  executionMinutes Float?  @map("execution_minutes")
+  costPerMinute  Float?    @map("cost_per_minute")
+  totalCost      Float?    @map("total_cost")
+
+  // Links & artifacts
+  videoUrl       String?   @map("video_url") @db.VarChar(500)
+  logsUrl        String?   @map("logs_url") @db.VarChar(500)
+  reportUrl      String?   @map("report_url") @db.VarChar(500)
+
+  // Error handling
+  errorMessage   String?   @map("error_message") @db.Text
+  retries        Int       @default(0)
+
+  // Metadata
+  metadata       Json?     // Additional cloud-specific data
+
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([projectId])
+  @@index([provider])
+  @@index([status])
+  @@index([enqueuedAt])
+  @@map("cloud_executions")
+}
+
+model UsageTracking {
+  id             Int       @id @default(autoincrement())
+  projectId      Int       @map("project_id")
+  organizationId Int?      @map("organization_id")
+
+  // Time period
+  periodStart    DateTime  @map("period_start")
+  periodEnd      DateTime  @map("period_end")
+
+  // Usage metrics
+  totalExecutions Int      @default(0) @map("total_executions")
+  totalMinutes   Float     @default(0) @map("total_minutes")
+  totalTests     Int       @default(0) @map("total_tests")
+
+  // Provider breakdown
+  browserstackMinutes Float @default(0) @map("browserstack_minutes")
+  saucelabsMinutes    Float @default(0) @map("saucelabs_minutes")
+  lambdatestMinutes   Float @default(0) @map("lambdatest_minutes")
+  localMinutes        Float @default(0) @map("local_minutes")
+
+  // Cost breakdown
+  totalCost      Float     @default(0) @map("total_cost")
+  browserstackCost Float   @default(0) @map("browserstack_cost")
+  saucelabsCost    Float   @default(0) @map("saucelabs_cost")
+  lambdatestCost   Float   @default(0) @map("lambdatest_cost")
+
+  // Limits & quotas
+  monthlyLimit   Float?    @map("monthly_limit")
+  warningThreshold Float?  @map("warning_threshold") // Alert at 80% usage
+
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@unique([projectId, periodStart])
+  @@index([organizationId])
+  @@index([periodStart])
+  @@map("usage_tracking")
+}
+
+model PricingTier {
+  id             Int       @id @default(autoincrement())
+  name           String    @unique @db.VarChar(100) // Starter, Professional, Enterprise
+
+  // Pricing
+  monthlyPrice   Float     @map("monthly_price")
+  yearlyPrice    Float?    @map("yearly_price")
+  currency       String    @default("USD") @db.VarChar(10)
+
+  // Limits
+  maxExecutionsPerMonth Int   @map("max_executions_per_month")
+  maxParallelSessions   Int   @map("max_parallel_sessions")
+  maxCloudMinutes       Int   @map("max_cloud_minutes")
+  maxUsers              Int   @map("max_users")
+  maxProjects           Int   @map("max_projects")
+
+  // Features
+  features       Json      // Array of feature flags
+
+  // Metadata
+  description    String?   @db.Text
+  isActive       Boolean   @default(true) @map("is_active")
+  displayOrder   Int       @default(0) @map("display_order")
+
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@map("pricing_tiers")
+}
