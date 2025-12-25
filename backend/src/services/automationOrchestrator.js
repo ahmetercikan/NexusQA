@@ -23,6 +23,7 @@ import crewAIBridge from './crewAIBridge.js';
 import axios from 'axios';
 import { triggerAgent } from './crewAIBridge.js';
 import { emitAgentStatus, emitNewLog, emitAutomationStep, emitAutomationCompleted, emitScriptGenerated, emitAutomationTestPass, emitAutomationTestFail } from '../websocket/socketHandler.js';
+import programmaticTestRunner from './programmaticTestRunner.js';
 
 // CrewAI API URL
 const CREWAI_API_URL = process.env.CREWAI_API_URL || 'http://localhost:8000';
@@ -304,7 +305,12 @@ async function executeWorkflow(workflowId, projectId, scenarioIds, options = {})
           }
         });
 
-        const testResult = await runTestForScenario(currentScenario, project, currentScenario.scriptPath, { headless, browser, slowMo });
+        const testResult = await runTestForScenario(currentScenario, project, currentScenario.scriptPath, {
+          headless,
+          browser,
+          slowMo,
+          workflowId  // CDP screencast için
+        });
 
         // Test Run kaydını güncelle (screenshot path dahil)
         await prisma.testRun.update({
@@ -691,7 +697,7 @@ export async function generateScriptForScenario(scenario, project, elementMappin
  * Tek senaryo için test koş
  */
 export async function runTestForScenario(scenario, project, scriptPath, options = {}) {
-  const { headless = false, browser = 'chromium' } = options;
+  const { headless = false, browser = 'chromium', workflowId = null } = options;
 
   // Orkestra Şefi Agent'ı aktifleştir
   await updateAgentStatus('ORCHESTRATOR', 'WORKING', 'Test koşuluyor...');
@@ -727,6 +733,35 @@ export async function runTestForScenario(scenario, project, scriptPath, options 
       await createLog('TEST_ARCHITECT', 'WARNING', `Agent hatası, orijinal script kullanılıyor: ${agentError.message}`);
     }
 
+    // HEADED MODE: Programatik runner + CDP screencast kullan
+    // HEADLESS MODE: CLI runner kullan (daha hızlı)
+    if (!headless && workflowId) {
+      console.log('[Orchestrator] 🎬 CDP Screencast aktif - Programatik runner kullanılıyor');
+      await createLog('ORCHESTRATOR', 'INFO', `Canlı browser görüntüsü başlatılıyor (CDP Screencast)`);
+
+      const result = await programmaticTestRunner.runTestWithScreencast(
+        scriptPath,
+        workflowId,
+        { headless, browser, slowMo: options.slowMo || 0 }
+      );
+
+      const duration = Date.now() - startTime;
+
+      await updateAgentStatus('ORCHESTRATOR', 'COMPLETED', 'Test tamamlandı');
+
+      return {
+        success: result.success,
+        duration,
+        passed: result.passed,
+        failed: result.failed,
+        error: result.error,
+        screenshotPath: null
+      };
+    }
+
+    // HEADLESS MODE veya workflowId yoksa: CLI runner (eski yöntem)
+    console.log('[Orchestrator] CLI runner kullanılıyor (headless veya workflowId yok)');
+
     // Playwright'ı başlat - headless veya headed modda
     // Backend root'tan relative path bul (config dosyası backend/'da)
     const relativeTestPath = path.relative(BACKEND_ROOT, scriptPath).replace(/\\/g, '/');
@@ -737,24 +772,12 @@ export async function runTestForScenario(scenario, project, scriptPath, options 
     await createLog('ORCHESTRATOR', 'INFO', `Test başlıyor: ${scriptPath}`);
     await createLog('ORCHESTRATOR', 'INFO', `Komut: ${testCommand}`);
 
-    // Screenshot monitoring - ŞİMDİLİK DEVRE DIŞI (Headed mode'da browser zaten görünüyor)
-    // const projectDir = path.dirname(scriptPath);
-    // const possibleScreenshotDirs = [
-    //   path.join(projectDir, 'screenshots'),
-    //   path.join(BACKEND_ROOT, 'tests', 'generated', 'screenshots'),
-    // ];
-    // const screenshotInterval = setInterval(async () => { ... }, 100);
-
-    console.log('[Orchestrator] Screenshot monitoring devre dışı - headed browser kullanılıyor');
-
     // CWD'yi backend root yap ki playwright.config.js bulunabilsin
     const { stdout, stderr } = await execAsync(testCommand, {
       cwd: BACKEND_ROOT, // backend dizini (config dosyası burada)
       timeout: 120000,
       shell: process.platform === 'win32' ? true : '/bin/bash'
     });
-
-    // clearInterval(screenshotInterval); // Artık gerek yok
 
     const duration = Date.now() - startTime;
 

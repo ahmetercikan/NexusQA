@@ -80,12 +80,13 @@ Hedef URL: {target_url}
 4. Geçerli selector'lar kullan: [data-testid="..."], [placeholder="..."], button:has-text("..."), input[type="..."]
 5. Her await ifadesinden sonra kısa bekleme ekle: await page.waitForTimeout(500);
 6. Assertion'lar ekle: toBeVisible(), toHaveText(), toHaveURL() vb.
+7. Test adları için ÇIFT TIRNAK kullan: test("Test Adı", ...) - Türkçe ekler ('e, 'ın, 'a) için gerekli
 
 === ÇIKTI FORMATI ===
 import {{ test, expect }} from '@playwright/test';
 
-test.describe('{safe_title}', () => {{
-  test('{safe_title}', async ({{ page }}) => {{
+test.describe("{safe_title}", () => {{
+  test("{safe_title}", async ({{ page }}) => {{
     {test_data_str if test_data_str else '// Test verisi tanımla'}
 
     // Adım 1: Sayfaya git
