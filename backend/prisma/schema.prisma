@@ -382,3 +382,50 @@ model ElementMemory {
   @@index([successCount]) // En başarılı pattern'leri bul
   @@map("element_memories")
 }
+
+// ============================================
+// MOBILE TESTING CONFIGURATION
+// ============================================
+
+model MobileTestConfig {
+  id             Int       @id @default(autoincrement())
+  projectId      Int?      @map("project_id")
+  scenarioId     Int?      @map("scenario_id")
+
+  // Device configuration
+  deviceName     String    @map("device_name") @db.VarChar(100) // "iPhone 15 Pro", "Samsung Galaxy S24"
+  platform       String    @db.VarChar(20) // ios, android, generic
+  orientation    String    @default("portrait") @db.VarChar(20) // portrait, landscape
+
+  // Viewport settings
+  viewportWidth  Int       @map("viewport_width")
+  viewportHeight Int       @map("viewport_height")
+  deviceScaleFactor Float  @map("device_scale_factor") @default(1)
+
+  // User agent
+  userAgent      String    @map("user_agent") @db.VarChar(500)
+
+  // Mobile-specific test settings
+  testTouchGestures Boolean @default(true) @map("test_touch_gestures") // Test tap, swipe, pinch
+  testRotation   Boolean   @default(false) @map("test_rotation") // Test both orientations
+  testResponsive Boolean   @default(true) @map("test_responsive") // Run responsive validation
+  testPerformance Boolean  @default(false) @map("test_performance") // Mobile performance metrics
+
+  // Network simulation
+  networkThrottling String? @map("network_throttling") @db.VarChar(50) // 3G, 4G, 5G, slow-3g
+  offline        Boolean   @default(false) // Test offline scenarios
+
+  // Geolocation
+  latitude       Float?
+  longitude      Float?
+
+  // Additional settings
+  metadata       Json?     // Custom settings, device capabilities, etc.
+
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([projectId])
+  @@index([platform])
+  @@map("mobile_test_configs")
+}
