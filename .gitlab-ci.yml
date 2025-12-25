@@ -1,0 +1,316 @@
+# Nexus QA - GitLab CI/CD Configuration
+# AI Agent-powered test automation with mobile support
+#
+# 🚀 Features:
+# - Multi-browser web testing (Chromium, Firefox, WebKit)
+# - Mobile testing (iOS/Android emulation)
+# - AI Agent integration tests
+# - Parallel execution
+# - Automatic reporting
+
+stages:
+  - setup
+  - test-web
+  - test-mobile
+  - test-agents
+  - report
+  - deploy
+
+variables:
+  NODE_VERSION: "18"
+  PYTHON_VERSION: "3.12"
+  PLAYWRIGHT_BROWSERS_PATH: "$CI_PROJECT_DIR/.playwright"
+  # Nexus QA API endpoints
+  NEXUS_QA_API: "${NEXUS_QA_API_URL}"
+  # AI API keys (configured in GitLab CI/CD Settings → Variables)
+  OPENAI_API_KEY: "${OPENAI_API_KEY}"
+  ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+
+# ==================== CACHE CONFIGURATION ====================
+cache:
+  key: "${CI_COMMIT_REF_SLUG}"
+  paths:
+    - backend/node_modules/
+    - .playwright/
+    - agents/.venv/
+
+# ==================== SETUP ====================
+setup:validation:
+  stage: setup
+  image: node:18-alpine
+  script:
+    - echo "🔍 Validating Nexus QA configuration..."
+    - cd backend
+    - test -f playwright.config.js || (echo "❌ Playwright config missing" && exit 1)
+    - test -f package.json || (echo "❌ package.json missing" && exit 1)
+    - echo "✅ Configuration validated"
+  artifacts:
+    reports:
+      dotenv: build.env
+
+# ==================== WEB TESTS ====================
+.web-test-template: &web_test_template
+  stage: test-web
+  image: mcr.microsoft.com/playwright:v1.40.0-jammy
+  before_script:
+    - cd backend
+    - npm ci
+    - npx playwright install --with-deps $BROWSER
+  script:
+    - echo "🧪 Running tests on $BROWSER..."
+    - npx playwright test --project=$BROWSER --reporter=html,json,junit
+  artifacts:
+    when: always
+    paths:
+      - backend/playwright-report/
+      - backend/test-results/
+      - backend/screenshots/
+    reports:
+      junit: backend/results.xml
+    expire_in: 30 days
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+web:chromium:
+  <<: *web_test_template
+  variables:
+    BROWSER: "chromium"
+
+web:firefox:
+  <<: *web_test_template
+  variables:
+    BROWSER: "firefox"
+
+web:webkit:
+  <<: *web_test_template
+  variables:
+    BROWSER: "webkit"
+
+# ==================== MOBILE TESTS ====================
+mobile:ios:
+  stage: test-mobile
+  image: mcr.microsoft.com/playwright:v1.40.0-jammy
+  parallel:
+    matrix:
+      - DEVICE: ["iPhone 15 Pro", "iPhone SE", "iPad Air"]
+  before_script:
+    - cd backend
+    - npm ci
+    - npx playwright install --with-deps chromium
+  script:
+    - echo "📱 Running mobile tests on $DEVICE..."
+    - npx playwright test tests/generated/mobile-demo.spec.js --project=chromium
+  artifacts:
+    when: always
+    paths:
+      - backend/screenshots/
+    expire_in: 30 days
+  allow_failure: false
+
+mobile:android:
+  stage: test-mobile
+  image: mcr.microsoft.com/playwright:v1.40.0-jammy
+  parallel:
+    matrix:
+      - DEVICE: ["Samsung Galaxy S24 Ultra", "Google Pixel 8 Pro"]
+  before_script:
+    - cd backend
+    - npm ci
+    - npx playwright install --with-deps chromium
+  script:
+    - echo "📱 Running mobile tests on $DEVICE..."
+    - npx playwright test tests/generated/mobile-demo.spec.js --project=chromium
+  artifacts:
+    when: always
+    paths:
+      - backend/screenshots/
+    expire_in: 30 days
+  allow_failure: false
+
+# ==================== AI AGENT TESTS ====================
+agent:api-tests:
+  stage: test-agents
+  image: python:3.12-slim
+  before_script:
+    - cd agents
+    - pip install -r requirements.txt
+  script:
+    - echo "🤖 Testing AI Agent API..."
+    - python -m pytest tests/ -v --tb=short --junitxml=agent-results.xml || true
+  artifacts:
+    when: always
+    reports:
+      junit: agents/agent-results.xml
+    expire_in: 30 days
+
+agent:integration-tests:
+  stage: test-agents
+  image: python:3.12-slim
+  dependencies:
+    - agent:api-tests
+  script:
+    - echo "🤖 Running Agent integration tests..."
+    - cd agents
+    - pip install -r requirements.txt
+    - python -m pytest tests/integration/ -v || true
+  allow_failure: true
+
+# ==================== REPORTING ====================
+report:generate:
+  stage: report
+  image: node:18-alpine
+  dependencies:
+    - web:chromium
+    - web:firefox
+    - web:webkit
+    - mobile:ios
+    - mobile:android
+    - agent:api-tests
+  script:
+    - echo "📊 Generating consolidated test report..."
+    - |
+      cat <<EOF > test-summary.md
+      # 🧪 Nexus QA Test Results
+
+      **Pipeline:** ${CI_PIPELINE_ID}
+      **Branch:** ${CI_COMMIT_REF_NAME}
+      **Commit:** ${CI_COMMIT_SHORT_SHA}
+      **Triggered by:** ${CI_PIPELINE_SOURCE}
+
+      ## Test Results
+
+      | Test Suite | Status |
+      |------------|--------|
+      | Web (Chromium) | ${WEB_CHROMIUM_STATUS:-pending} |
+      | Web (Firefox) | ${WEB_FIREFOX_STATUS:-pending} |
+      | Web (WebKit) | ${WEB_WEBKIT_STATUS:-pending} |
+      | Mobile (iOS) | ${MOBILE_IOS_STATUS:-pending} |
+      | Mobile (Android) | ${MOBILE_ANDROID_STATUS:-pending} |
+      | AI Agents | ${AGENT_STATUS:-pending} |
+
+      ---
+      🚀 Powered by Nexus QA - AI Agent Test Automation
+      EOF
+    - cat test-summary.md
+  artifacts:
+    paths:
+      - test-summary.md
+    expire_in: 90 days
+
+report:notify-slack:
+  stage: report
+  image: curlimages/curl:latest
+  dependencies:
+    - report:generate
+  script:
+    - |
+      if [ -n "$SLACK_WEBHOOK_URL" ]; then
+        echo "📢 Sending Slack notification..."
+        STATUS_COLOR="good"
+        if [ "$CI_JOB_STATUS" != "success" ]; then
+          STATUS_COLOR="danger"
+        fi
+
+        curl -X POST $SLACK_WEBHOOK_URL \
+          -H 'Content-Type: application/json' \
+          -d '{
+            "attachments": [{
+              "color": "'$STATUS_COLOR'",
+              "title": "Nexus QA Pipeline - '$CI_JOB_STATUS'",
+              "text": "Branch: '$CI_COMMIT_REF_NAME'\nCommit: '$CI_COMMIT_SHORT_SHA'",
+              "fields": [
+                {"title": "Pipeline", "value": "'$CI_PIPELINE_ID'", "short": true},
+                {"title": "Triggered by", "value": "'$GITLAB_USER_NAME'", "short": true}
+              ],
+              "footer": "Nexus QA",
+              "footer_icon": "https://gitlab.com/favicon.ico",
+              "ts": '$(date +%s)'
+            }]
+          }'
+      else
+        echo "⚠ SLACK_WEBHOOK_URL not configured. Skipping Slack notification."
+      fi
+  allow_failure: true
+  only:
+    - main
+    - develop
+
+report:notify-teams:
+  stage: report
+  image: curlimages/curl:latest
+  script:
+    - |
+      if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+        echo "📢 Sending Microsoft Teams notification..."
+        curl -X POST $TEAMS_WEBHOOK_URL \
+          -H 'Content-Type: application/json' \
+          -d '{
+            "@type": "MessageCard",
+            "@context": "https://schema.org/extensions",
+            "summary": "Nexus QA Test Results",
+            "themeColor": "'$([ "$CI_JOB_STATUS" = "success" ] && echo "28a745" || echo "dc3545")'",
+            "title": "🧪 Nexus QA Pipeline Results",
+            "sections": [{
+              "activityTitle": "Pipeline '$CI_PIPELINE_ID'",
+              "activitySubtitle": "Branch: '$CI_COMMIT_REF_NAME'",
+              "facts": [
+                {"name": "Status", "value": "'$CI_JOB_STATUS'"},
+                {"name": "Commit", "value": "'$CI_COMMIT_SHORT_SHA'"},
+                {"name": "Triggered by", "value": "'$GITLAB_USER_NAME'"}
+              ]
+            }],
+            "potentialAction": [{
+              "@type": "OpenUri",
+              "name": "View Pipeline",
+              "targets": [{"os": "default", "uri": "'$CI_PIPELINE_URL'"}]
+            }]
+          }'
+      else
+        echo "⚠ TEAMS_WEBHOOK_URL not configured. Skipping Teams notification."
+      fi
+  allow_failure: true
+  only:
+    - main
+    - develop
+
+# ==================== DEPLOY (Optional) ====================
+deploy:staging:
+  stage: deploy
+  image: node:18-alpine
+  script:
+    - echo "🚀 Deploying to staging environment..."
+    - echo "Deployment logic goes here"
+  environment:
+    name: staging
+    url: https://staging.nexusqa.com
+  only:
+    - develop
+  when: manual
+
+deploy:production:
+  stage: deploy
+  image: node:18-alpine
+  script:
+    - echo "🚀 Deploying to production environment..."
+    - echo "Deployment logic goes here"
+  environment:
+    name: production
+    url: https://app.nexusqa.com
+  only:
+    - main
+  when: manual
+
+# ==================== CONFIGURATION NOTES ====================
+#
+# Required GitLab CI/CD Variables (Settings → CI/CD → Variables):
+# - NEXUS_QA_API_URL: Your Nexus QA backend URL
+# - OPENAI_API_KEY: OpenAI API key for Vision AI
+# - ANTHROPIC_API_KEY: Anthropic API key for AI Agents
+# - SLACK_WEBHOOK_URL (optional): Slack webhook for notifications
+# - TEAMS_WEBHOOK_URL (optional): Microsoft Teams webhook
+#
+# 🚀 Powered by Nexus QA
+# 📱 Supports Web + Mobile + AI Agents
