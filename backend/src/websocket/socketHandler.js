@@ -44,12 +44,22 @@ export const initializeSocket = (server) => {
       console.log(`${socket.id} subscribed to automation`);
     });
 
+    // Screencast subscribe (workflow-specific)
+    socket.on('subscribe:screencast', (workflowId) => {
+      socket.join(`screencast:${workflowId}`);
+      console.log(`${socket.id} subscribed to screencast for workflow ${workflowId}`);
+    });
+
     // Unsubscribe
     socket.on('unsubscribe:agents', () => socket.leave('agents'));
     socket.on('unsubscribe:logs', () => socket.leave('logs'));
     socket.on('unsubscribe:tests', () => socket.leave('tests'));
     socket.on('unsubscribe:documents', () => socket.leave('documents'));
     socket.on('unsubscribe:automation', () => socket.leave('automation'));
+    socket.on('unsubscribe:screencast', (workflowId) => {
+      socket.leave(`screencast:${workflowId}`);
+      console.log(`${socket.id} unsubscribed from screencast ${workflowId}`);
+    });
 
     socket.on('disconnect', (reason) => {
       console.log(`Client disconnected: ${socket.id}, reason: ${reason}`);
@@ -196,6 +206,33 @@ export const emitBrowserScreenshot = (screenshotData) => {
   }
 };
 
+// CDP Screencast frame gönder (real-time browser görüntüsü)
+export const emitScreencastFrame = (frameData) => {
+  if (io) {
+    // workflowId'ye özel room'a gönder (performans için)
+    const { workflowId, data, metadata } = frameData;
+    io.to(`screencast:${workflowId}`).emit('browser:screencast:frame', {
+      data, // Base64 JPEG
+      metadata,
+      timestamp: Date.now()
+    });
+  }
+};
+
+// Screencast başlat event'i
+export const emitScreencastStarted = (workflowId) => {
+  if (io) {
+    io.to('automation').emit('browser:screencast:started', { workflowId });
+  }
+};
+
+// Screencast durdur event'i
+export const emitScreencastStopped = (workflowId) => {
+  if (io) {
+    io.to('automation').emit('browser:screencast:stopped', { workflowId });
+  }
+};
+
 export const getIO = () => io;
 
 export default {
@@ -221,5 +258,8 @@ export default {
   emitScriptGenerated,
   emitTestRunResult,
   emitBrowserScreenshot,
+  emitScreencastFrame,
+  emitScreencastStarted,
+  emitScreencastStopped,
   getIO
 };

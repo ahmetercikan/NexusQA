@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nexus QA - Canlı Browser Görüntüsü</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+      color: #00d4ff;
+      font-size: 2rem;
+    }
+
+    .browser-panel {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 8px 32px rgba(0, 212, 255, 0.1);
+    }
+
+    .browser-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+      padding-bottom: 15px;
+      border-bottom: 2px solid #0f3460;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #ff3333;
+      animation: pulse 2s infinite;
+    }
+
+    .status-dot.connected {
+      background: #00ff88;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .browser-viewport {
+      position: relative;
+      width: 100%;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    }
+
+    .browser-screen {
+      width: 100%;
+      height: auto;
+      display: block;
+      min-height: 600px;
+      object-fit: contain;
+    }
+
+    .placeholder {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      color: #666;
+    }
+
+    .placeholder svg {
+      width: 80px;
+      height: 80px;
+      margin-bottom: 10px;
+      opacity: 0.5;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      margin-top: 15px;
+    }
+
+    .stat-card {
+      background: #0f3460;
+      padding: 15px;
+      border-radius: 8px;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: #00d4ff;
+    }
+
+    .stat-label {
+      font-size: 0.85rem;
+      color: #aaa;
+      margin-top: 5px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      background: #00d4ff;
+      color: #000;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    button:hover {
+      background: #00a8cc;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 212, 255, 0.3);
+    }
+
+    button:disabled {
+      background: #444;
+      color: #888;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    input {
+      background: #0f3460;
+      border: 2px solid #1a73e8;
+      color: #eee;
+      padding: 10px 15px;
+      border-radius: 6px;
+      flex: 1;
+      min-width: 200px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎬 Canlı Browser Görüntüsü - Nexus QA</h1>
+
+    <div class="browser-panel">
+      <div class="browser-header">
+        <div class="status">
+          <div class="status-dot" id="statusDot"></div>
+          <span id="statusText">Bağlantı Bekleniyor</span>
+        </div>
+
+        <div class="controls">
+          <input type="text" id="workflowIdInput" placeholder="Workflow ID (örn: workflow-1234567890)">
+          <button onclick="connect()" id="connectBtn">Bağlan</button>
+          <button onclick="disconnect()" id="disconnectBtn" disabled>Bağlantıyı Kes</button>
+        </div>
+      </div>
+
+      <div class="browser-viewport">
+        <img id="browserScreen" class="browser-screen" style="display: none;">
+        <div class="placeholder" id="placeholder">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+            <line x1="8" y1="21" x2="16" y2="21"></line>
+            <line x1="12" y1="17" x2="12" y2="21"></line>
+          </svg>
+          <div>Canlı görüntü bekleniyor...</div>
+          <div style="font-size: 0.85rem; margin-top: 5px;">Workflow ID girin ve Bağlan'a tıklayın</div>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat-card">
+          <div class="stat-value" id="fpsValue">0</div>
+          <div class="stat-label">FPS</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="frameCountValue">0</div>
+          <div class="stat-label">Total Frames</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="resolutionValue">-</div>
+          <div class="stat-label">Resolution</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="latencyValue">-</div>
+          <div class="stat-label">Latency (ms)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    let socket = null;
+    let currentWorkflowId = null;
+    let frameCount = 0;
+    let lastFrameTime = Date.now();
+    let fpsCounter = 0;
+    let fpsInterval = null;
+
+    // DOM elements
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const browserScreen = document.getElementById('browserScreen');
+    const placeholder = document.getElementById('placeholder');
+    const workflowIdInput = document.getElementById('workflowIdInput');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const fpsValue = document.getElementById('fpsValue');
+    const frameCountValue = document.getElementById('frameCountValue');
+    const resolutionValue = document.getElementById('resolutionValue');
+    const latencyValue = document.getElementById('latencyValue');
+
+    function connect() {
+      const workflowId = workflowIdInput.value.trim();
+
+      if (!workflowId) {
+        alert('Lütfen Workflow ID girin!');
+        return;
+      }
+
+      currentWorkflowId = workflowId;
+
+      // Socket.IO bağlantısı
+      socket = io('http://localhost:3001', {
+        transports: ['websocket', 'polling']
+      });
+
+      socket.on('connect', () => {
+        console.log('✅ WebSocket bağlantısı kuruldu');
+        updateStatus('connected', `Bağlandı - Workflow: ${workflowId}`);
+
+        // Automation room'a subscribe
+        socket.emit('subscribe:automation');
+
+        // Screencast room'a subscribe (workflow-specific)
+        socket.emit('subscribe:screencast', workflowId);
+
+        connectBtn.disabled = true;
+        disconnectBtn.disabled = false;
+        workflowIdInput.disabled = true;
+
+        // FPS counter başlat
+        startFPSCounter();
+      });
+
+      socket.on('disconnect', () => {
+        console.log('❌ WebSocket bağlantısı kesildi');
+        updateStatus('disconnected', 'Bağlantı Kesildi');
+        stopFPSCounter();
+      });
+
+      // Screencast frame event
+      socket.on('browser:screencast:frame', (frameData) => {
+        const { data, metadata, timestamp } = frameData;
+
+        // Base64 image data'yı img element'e set et
+        browserScreen.src = `data:image/jpeg;base64,${data}`;
+        browserScreen.style.display = 'block';
+        placeholder.style.display = 'none';
+
+        // Stats güncelle
+        frameCount++;
+        fpsCounter++;
+        frameCountValue.textContent = frameCount;
+
+        // Resolution
+        if (metadata) {
+          resolutionValue.textContent = `${metadata.deviceWidth || 0}x${metadata.deviceHeight || 0}`;
+        }
+
+        // Latency hesapla
+        const now = Date.now();
+        const latency = now - timestamp;
+        latencyValue.textContent = latency;
+
+        lastFrameTime = now;
+      });
+
+      // Screencast başladı
+      socket.on('browser:screencast:started', (data) => {
+        console.log('🎬 Screencast başladı:', data.workflowId);
+        updateStatus('streaming', `Canlı Yayın Başladı - ${data.workflowId}`);
+      });
+
+      // Screencast durdu
+      socket.on('browser:screencast:stopped', (data) => {
+        console.log('⏹️ Screencast durdu:', data.workflowId);
+        updateStatus('connected', `Canlı Yayın Durdu - ${data.workflowId}`);
+        stopFPSCounter();
+      });
+
+      socket.on('error', (error) => {
+        console.error('Socket error:', error);
+      });
+    }
+
+    function disconnect() {
+      if (socket) {
+        socket.emit('unsubscribe:screencast', currentWorkflowId);
+        socket.emit('unsubscribe:automation');
+        socket.disconnect();
+        socket = null;
+      }
+
+      updateStatus('disconnected', 'Bağlantı Bekleniyor');
+      browserScreen.style.display = 'none';
+      placeholder.style.display = 'block';
+
+      connectBtn.disabled = false;
+      disconnectBtn.disabled = true;
+      workflowIdInput.disabled = false;
+
+      frameCount = 0;
+      fpsCounter = 0;
+      frameCountValue.textContent = '0';
+      fpsValue.textContent = '0';
+      resolutionValue.textContent = '-';
+      latencyValue.textContent = '-';
+
+      stopFPSCounter();
+    }
+
+    function updateStatus(status, text) {
+      statusText.textContent = text;
+
+      statusDot.classList.remove('connected');
+      if (status === 'connected' || status === 'streaming') {
+        statusDot.classList.add('connected');
+      }
+    }
+
+    function startFPSCounter() {
+      stopFPSCounter();
+      fpsInterval = setInterval(() => {
+        fpsValue.textContent = fpsCounter;
+        fpsCounter = 0;
+      }, 1000);
+    }
+
+    function stopFPSCounter() {
+      if (fpsInterval) {
+        clearInterval(fpsInterval);
+        fpsInterval = null;
+      }
+    }
+
+    // URL'den workflow ID al (opsiyonel)
+    const urlParams = new URLSearchParams(window.location.search);
+    const workflowIdFromUrl = urlParams.get('workflowId');
+    if (workflowIdFromUrl) {
+      workflowIdInput.value = workflowIdFromUrl;
+    }
+  </script>
+</body>
+</html>
